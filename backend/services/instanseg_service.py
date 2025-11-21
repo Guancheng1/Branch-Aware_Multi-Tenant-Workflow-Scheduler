@@ -994,6 +994,7 @@ class InstanSegService:
             "image_path": image_path,
             "mask_path": str(mask_path),
             "visualization_path": str(vis_path),
+            "result_path": str(mask_path),  # 添加 result_path 以便前端显示 View Results 按钮
             "tissue_area": int(np.sum(mask > 0)),
             "total_area": int(mask.size),
             "tissue_percentage": float(np.sum(mask > 0) / mask.size * 100),

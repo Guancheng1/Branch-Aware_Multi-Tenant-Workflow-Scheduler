@@ -983,8 +983,60 @@ function showError(message) {
 // View task results
 async function viewJobResults(jobId, userId) {
     try {
-        // Build result path
+        // First, get job details to determine job type
+        const jobResponse = await fetch(`${API_BASE}/jobs/${jobId}`, {
+            headers: { 'X-User-ID': currentUserId }
+        });
+        
+        if (!jobResponse.ok) {
+            showError('Cannot load task information');
+            return;
+        }
+        
+        const job = await jobResponse.json();
         const resultsBaseUrl = `/results/${userId}/${jobId}`;
+        
+        // Handle different job types
+        if (job.job_type === 'tissue_mask') {
+            // Tissue mask job - load mask images
+            await viewTissueMaskResults(resultsBaseUrl, job);
+        } else if (job.job_type === 'cell_segmentation') {
+            // Cell segmentation job - load segmentation results
+            await viewCellSegmentationResults(resultsBaseUrl, job);
+        } else {
+            showError('Unknown job type: ' + job.job_type);
+        }
+    } catch (error) {
+        console.error('Error loading results:', error);
+        showError('Failed to load results: ' + error.message);
+    }
+}
+
+// View tissue mask results
+async function viewTissueMaskResults(resultsBaseUrl, job) {
+    try {
+        const tissueMaskUrl = `${resultsBaseUrl}/tissue_mask.png`;
+        const overlayUrl = `${resultsBaseUrl}/tissue_mask_overlay.jpg`;
+        
+        // Check if mask file exists
+        const maskResponse = await fetch(tissueMaskUrl, { method: 'HEAD' });
+        if (!maskResponse.ok) {
+            showError('Tissue mask file does not exist or is inaccessible');
+            return;
+        }
+        
+        // Render tissue mask results
+        renderTissueMaskView(tissueMaskUrl, overlayUrl, job);
+        openModal('resultsModal');
+    } catch (error) {
+        console.error('Error loading tissue mask results:', error);
+        showError('Failed to load tissue mask results: ' + error.message);
+    }
+}
+
+// View cell segmentation results
+async function viewCellSegmentationResults(resultsBaseUrl, job) {
+    try {
         const jsonUrl = `${resultsBaseUrl}/segmentation_results.json`;
         const imageUrl = `${resultsBaseUrl}/visualization.jpg`;
         
@@ -998,15 +1050,68 @@ async function viewJobResults(jobId, userId) {
         const results = await jsonResponse.json();
         
         // Display results modal
-        renderResultsView(results, imageUrl, jsonUrl, userId, jobId);
+        renderCellSegmentationView(results, imageUrl, jsonUrl, job);
         openModal('resultsModal');
     } catch (error) {
-        console.error('Error loading results:', error);
-        showError('Failed to load results: ' + error.message);
+        console.error('Error loading segmentation results:', error);
+        showError('Failed to load segmentation results: ' + error.message);
     }
 }
 
-function renderResultsView(results, imageUrl, jsonUrl, userId, jobId) {
+// Render tissue mask results
+function renderTissueMaskView(tissueMaskUrl, overlayUrl, job) {
+    const content = document.getElementById('resultsContent');
+    
+    content.innerHTML = `
+        <div style="margin-bottom: 1.5rem;">
+            <h4>Task Information</h4>
+            <div style="display: grid; gap: 0.75rem; margin-top: 1rem;">
+                <div><strong>Task Type:</strong> Tissue Mask</div>
+                <div><strong>Task ID:</strong> <code>${job.job_id}</code></div>
+                <div><strong>Branch:</strong> ${job.branch}</div>
+                <div><strong>Image Path:</strong> <code style="font-size: 0.875rem;">${job.image_path}</code></div>
+            </div>
+        </div>
+        
+        <div style="margin-bottom: 1.5rem;">
+            <h4>🎯 Tissue Mask</h4>
+            <p style="color: var(--text-muted); font-size: 0.875rem; margin-bottom: 1rem;">
+                Binary mask of tissue regions. White areas represent tissue, black areas represent background.
+            </p>
+            <div style="margin-top: 1rem; text-align: center; background: #f5f5f5; padding: 1rem; border-radius: 8px;">
+                <img src="${tissueMaskUrl}" 
+                     alt="Tissue Mask" 
+                     style="max-width: 100%; height: auto; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);"
+                     onerror="this.parentElement.innerHTML='<p style=color:var(--error-color)>❌ Failed to load mask image</p>'">
+            </div>
+        </div>
+        
+        <div style="margin-bottom: 1.5rem;">
+            <h4>🖼️ Overlay Visualization</h4>
+            <p style="color: var(--text-muted); font-size: 0.875rem; margin-bottom: 1rem;">
+                Tissue mask overlaid on the original image. Background areas are darkened.
+            </p>
+            <div style="margin-top: 1rem; text-align: center; background: #f5f5f5; padding: 1rem; border-radius: 8px;">
+                <img src="${overlayUrl}" 
+                     alt="Tissue Mask Overlay" 
+                     style="max-width: 100%; height: auto; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);"
+                     onerror="this.parentElement.innerHTML='<p style=color:var(--error-color)>❌ Failed to load overlay image</p>'">
+            </div>
+        </div>
+        
+        <div style="margin-top: 1.5rem; display: flex; gap: 0.5rem; flex-wrap: wrap;">
+            <a href="${tissueMaskUrl}" download="tissue_mask.png" class="btn btn-secondary">
+                📥 Download Mask
+            </a>
+            <a href="${overlayUrl}" download="tissue_mask_overlay.jpg" class="btn btn-secondary">
+                📥 Download Overlay
+            </a>
+        </div>
+    `;
+}
+
+// Render cell segmentation results
+function renderCellSegmentationView(results, imageUrl, jsonUrl, job) {
     const content = document.getElementById('resultsContent');
     
     content.innerHTML = `
