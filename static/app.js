@@ -783,9 +783,9 @@ function buildDetailedDAG(nodes) {
         
         const depsHtml = node.depends_on && node.depends_on.length > 0
             ? `<div style="margin-top: 0.5rem; padding-top: 0.5rem; border-top: 1px solid #e0e0e0;">
-                   <strong style="font-size: 0.75rem; color: var(--text-muted);">Depends on:</strong>
+                   <strong style="font-size: 0.75rem; color: #1e293b;">Depends on:</strong>
                    ${node.depends_on.map(dep => `
-                       <span style="display: inline-block; background: #fff3cd; padding: 0.125rem 0.5rem; border-radius: 3px; margin: 0.125rem; font-size: 0.7rem;">
+                       <span style="display: inline-block; background: #fff3cd; color: #856404; padding: 0.125rem 0.5rem; border-radius: 3px; margin: 0.125rem; font-size: 0.75rem; font-weight: 500;">
                            ${dep.replace('job_', '').substring(0, 8)}
                        </span>
                    `).join('')}
@@ -797,7 +797,7 @@ function buildDetailedDAG(nodes) {
                 <div style="display: flex; align-items: center; gap: 0.5rem;">
                     <span style="font-size: 1.5rem;">${typeIcon}</span>
                     <div style="flex: 1;">
-                        <div style="font-weight: 600;">${typeText}</div>
+                        <div style="font-weight: 600; color: #1e293b;">${typeText}</div>
                         <div style="font-size: 0.75rem; color: var(--text-muted); font-family: monospace;">
                             Branch: ${node.branch} | ID: ${jobId.substring(0, 16)}...
                         </div>

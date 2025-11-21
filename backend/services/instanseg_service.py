@@ -199,45 +199,68 @@ class InstanSegService:
         logger.info(f"Tile filtering: {total_tiles} → {len(filtered_tiles)} "
                    f"(speedup: {total_tiles/max(len(filtered_tiles), 1):.2f}x)")
         
-        # 处理瓦片
+        # 处理瓦片（批处理优化）
         all_masks = []
         all_labels = []
         processed = 0
         tiles_with_cells = 0
         tiles_skipped_density = 0
         
-        for i, (x, y, w, h) in enumerate(filtered_tiles):
+        # 准备批次
+        batch_size = settings.BATCH_SIZE
+        print(f"📦 [BATCH] Using batch size: {batch_size}")
+        
+        # 分批处理
+        for batch_start in range(0, len(filtered_tiles), batch_size):
+            batch_end = min(batch_start + batch_size, len(filtered_tiles))
+            batch_tiles = filtered_tiles[batch_start:batch_end]
+            
             if progress_callback:
                 await progress_callback(
                     processed, 
                     len(filtered_tiles),
-                    f"Processing tile {i+1}/{len(filtered_tiles)}"
+                    f"Processing batch {batch_start//batch_size + 1}/{(len(filtered_tiles) + batch_size - 1)//batch_size}"
                 )
             
-            print(f"🧩 [STAGE 2] Processing tile {i+1}/{len(filtered_tiles)} at ({x},{y},{w},{h})")
+            print(f"\n📦 [BATCH] Processing batch {batch_start//batch_size + 1} "
+                  f"(tiles {batch_start+1}-{batch_end}/{len(filtered_tiles)})")
             
-            # 提取瓦片
-            tile_image = image[y:y+h, x:x+w]
+            # 准备当前批次的瓦片
+            current_batch = []
+            for i, (x, y, w, h) in enumerate(batch_tiles):
+                tile_idx = batch_start + i
+                
+                # 提取瓦片
+                tile_image = image[y:y+h, x:x+w]
+                
+                # 快速密度检查（第二层过滤）
+                if not self._should_process_tile_by_density(tile_image):
+                    print(f"  ⏭️ [FILTER] Skipped tile {tile_idx+1} (low density)")
+                    tiles_skipped_density += 1
+                    processed += 1
+                    continue
+                
+                # 添加到批次
+                current_batch.append((tile_image, x, y, w, h))
             
-            # 快速密度检查（第二层过滤）
-            if not self._should_process_tile_by_density(tile_image):
-                print(f"⏭️ [OPTIMIZATION] Skipped tile {i+1} (low density)")
-                tiles_skipped_density += 1
-                processed += 1
-                continue
-            
-            # 分割瓦片
-            masks, labels = await self._segment_tile(tile_image, x, y)
-            
-            if masks is not None and len(masks) > 0:
-                all_masks.extend(masks)
-                all_labels.extend(labels)
-                tiles_with_cells += 1
-                print(f"✓ [STAGE 2] Tile {i+1} processed, found {len(masks)} cells")
+            # 如果批次不为空，进行批量分割
+            if current_batch:
+                print(f"  🔬 [BATCH] Segmenting {len(current_batch)} tiles...")
+                
+                # 批量分割
+                batch_masks, batch_labels = await self._segment_tiles_batch(current_batch)
+                
+                if batch_masks is not None and len(batch_masks) > 0:
+                    all_masks.extend(batch_masks)
+                    all_labels.extend(batch_labels)
+                    tiles_with_cells += len(current_batch)
+                    print(f"  ✅ [BATCH] Batch processed, found {len(batch_masks)} cells total")
+                else:
+                    print(f"  ✗ [BATCH] Batch returned no results")
+                
+                processed += len(current_batch)
             else:
-                print(f"✗ [STAGE 2] Tile {i+1} returned no results")
-            
-            processed += 1
+                print(f"  ⏭️ [BATCH] Entire batch skipped due to low density")
         
         seg_time = time.time() - seg_start
         total_time = time.time() - start_time
@@ -653,6 +676,135 @@ class InstanSegService:
                   f"(area < {settings.MIN_CELL_AREA})")
         
         print(f"  ✅ [INSTANSEG_REAL] 从labeled_output提取了 {len(masks)} 个细胞")
+        return masks, labels
+    
+    async def _segment_tiles_batch(
+        self,
+        tile_batch: List[Tuple[np.ndarray, int, int, int, int]]
+    ) -> Tuple[List, List]:
+        """
+        批量分割多个瓦片（优化版 - 充分利用GPU并行能力）
+        
+        Args:
+            tile_batch: List of (tile_image, x, y, w, h)
+            
+        Returns:
+            (all_masks, all_labels)
+        """
+        if not INSTANSEG_AVAILABLE or self.model is None:
+            error_msg = "InstanSeg not available or model not loaded"
+            logger.error(error_msg)
+            raise RuntimeError(error_msg)
+        
+        if not tile_batch:
+            return [], []
+        
+        print(f"🚀 [BATCH] Processing batch of {len(tile_batch)} tiles")
+        
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(
+            None,
+            self._segment_tiles_batch_sync,
+            tile_batch
+        )
+        return result
+    
+    def _segment_tiles_batch_sync(
+        self,
+        tile_batch: List[Tuple[np.ndarray, int, int, int, int]]
+    ) -> Tuple[List, List]:
+        """
+        同步批量分割瓦片 - 使用真实的InstanSeg批处理
+        """
+        all_masks = []
+        all_labels = []
+        
+        if not tile_batch:
+            return all_masks, all_labels
+        
+        # 优化：使用 inference_mode 减少显存和计算开销
+        with torch.inference_mode():
+            # 批量处理每个瓦片
+            print(f"  🔬 [BATCH] Processing {len(tile_batch)} tiles with InstanSeg")
+            print(f"  📏 [BATCH] Using pixel_size={self.pixel_size:.4f} μm/pixel")
+            
+            for i, (tile_image, x, y, w, h) in enumerate(tile_batch):
+                # 使用InstanSeg分割当前瓦片
+                labeled_output, _ = self.model.eval_small_image(
+                    tile_image, 
+                    pixel_size=self.pixel_size
+                )
+                
+                # 从输出中提取masks
+                masks, labels = self._extract_masks_from_output(labeled_output, x, y)
+                all_masks.extend(masks)
+                all_labels.extend(labels)
+            
+            print(f"  ✅ [BATCH] Batch processing complete, found {len(all_masks)} cells")
+        
+        return all_masks, all_labels
+    
+    def _extract_masks_from_output(
+        self,
+        labeled_output,
+        offset_x: int,
+        offset_y: int
+    ) -> Tuple[List, List]:
+        """
+        从InstanSeg输出中提取masks和labels
+        """
+        # 将Tensor转换为numpy数组
+        if torch.is_tensor(labeled_output):
+            labeled_output = labeled_output.cpu().numpy()
+        
+        # 处理维度
+        if len(labeled_output.shape) == 4:
+            labeled_output = labeled_output[0, 0]
+        elif len(labeled_output.shape) == 3:
+            labeled_output = labeled_output[0]
+        
+        masks = []
+        labels = []
+        
+        # 获取所有唯一的标签（跳过背景0）
+        unique_labels = np.unique(labeled_output)
+        unique_labels = unique_labels[unique_labels > 0]
+        
+        filtered_count = 0
+        for label_id in unique_labels:
+            # 创建当前标签的二值mask
+            binary_mask = (labeled_output == label_id).astype(np.uint8)
+            
+            # 查找轮廓
+            contours, _ = cv2.findContours(
+                binary_mask, 
+                cv2.RETR_EXTERNAL, 
+                cv2.CHAIN_APPROX_SIMPLE
+            )
+            
+            if contours:
+                # 使用最大的轮廓
+                contour = max(contours, key=cv2.contourArea)
+                
+                # 最小面积过滤
+                area = cv2.contourArea(contour)
+                if area < settings.MIN_CELL_AREA:
+                    filtered_count += 1
+                    continue
+                
+                if len(contour) >= 3:
+                    # 简化轮廓
+                    epsilon = 0.01 * cv2.arcLength(contour, True)
+                    approx = cv2.approxPolyDP(contour, epsilon, True)
+                    
+                    # 调整坐标偏移
+                    polygon = approx.reshape(-1, 2).astype(float)
+                    polygon[:, 0] += offset_x
+                    polygon[:, 1] += offset_y
+                    
+                    masks.append(polygon)
+                    labels.append(f"cell_{label_id}")
+        
         return masks, labels
     
     async def _merge_results(

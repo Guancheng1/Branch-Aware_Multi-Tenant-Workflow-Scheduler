@@ -80,17 +80,9 @@ async def create_job(
                 # 创建workflow nodes
                 nodes = []
                 
-                # 添加依赖的jobs作为nodes
-                for dep_job in dependent_jobs:
-                    if not any(n.node_id == f"job_{dep_job.job_id}" for n in nodes):
-                        nodes.append(WorkflowNode(
-                            node_id=f"job_{dep_job.job_id}",
-                            job_type=dep_job.job_type,
-                            branch=dep_job.branch,
-                            image_path=dep_job.image_path,
-                            parameters=dep_job.parameters,
-                            depends_on=[]
-                        ))
+                # 不要为已存在的jobs创建nodes！
+                # 已存在的jobs已经在调度器中运行，不应该重复创建
+                # 只添加新job作为node，并通过depends_on引用已存在的job_ids
                 
                 # 添加新job作为node
                 new_node = WorkflowNode(
@@ -107,9 +99,9 @@ async def create_job(
                 workflow = Workflow(
                     user_id=user_id,
                     name=workflow_name,
-                    description=f"Automatically created workflow with {len(nodes)} tasks",
+                    description=f"Automatically created workflow with dependency on existing jobs",
                     nodes=nodes,
-                    job_ids=[dep_job.job_id for dep_job in dependent_jobs]
+                    job_ids=[dep_job.job_id for dep_job in dependent_jobs]  # 记录依赖的job_ids但不创建新的
                 )
                 
                 workflow_id = await workflow_manager.create_workflow(workflow)

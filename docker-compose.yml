@@ -32,16 +32,23 @@ services:
       - DEVICE=cpu  # 如果有GPU，改为cuda
       - PYTHONUNBUFFERED=1  # 确保print立即输出到日志
     volumes:
+      # 数据目录
       - ./uploads:/app/uploads
       - ./results:/app/results
       - ./logs:/app/logs
       - ./static:/app/static
+      # 源代码挂载（开发模式 - 修改代码无需重新build）
+      - ./backend:/app/backend
+      - ./main.py:/app/main.py
+      - ./requirements.txt:/app/requirements.txt
     networks:
       - workflow-network
     depends_on:
       redis:
         condition: service_healthy
     restart: unless-stopped
+    # 开发模式：代码变更后自动重启（可选）
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 
   # Prometheus - 监控
   prometheus:

@@ -64,14 +64,24 @@ class WorkflowManager:
         node_ids = {node.node_id for node in nodes}
         graph = {node.node_id: node.depends_on for node in nodes}
         
-        # 检查所有依赖是否存在
+        # 检查所有依赖是否存在（只检查workflow内部的依赖）
         for node in nodes:
             for dep in node.depends_on:
+                # 如果依赖以 "job_" 开头，说明是外部job引用，跳过检查
+                if dep.startswith("job_"):
+                    continue
+                # 否则应该是workflow内部的node_id
                 if dep not in node_ids:
                     logger.error(f"Node {node.node_id} depends on non-existent node {dep}")
                     return False
         
-        # 检查是否有环（拓扑排序）
+        # 检查是否有环（只在workflow内部的依赖中检查）
+        # 只构建内部节点之间的依赖关系
+        internal_graph = {}
+        for node in nodes:
+            internal_deps = [dep for dep in node.depends_on if dep in node_ids]
+            internal_graph[node.node_id] = internal_deps
+        
         visited = set()
         rec_stack = set()
         
@@ -79,7 +89,7 @@ class WorkflowManager:
             visited.add(node_id)
             rec_stack.add(node_id)
             
-            for neighbor in graph.get(node_id, []):
+            for neighbor in internal_graph.get(node_id, []):
                 if neighbor not in visited:
                     if has_cycle(neighbor):
                         return True
@@ -89,7 +99,7 @@ class WorkflowManager:
             rec_stack.remove(node_id)
             return False
         
-        for node_id in graph:
+        for node_id in internal_graph:
             if node_id not in visited:
                 if has_cycle(node_id):
                     logger.error("DAG contains cycle")
@@ -123,9 +133,27 @@ class WorkflowManager:
                         and node.node_id not in failed_nodes
                         and node.node_id not in running_nodes):
                         # 检查依赖
-                        deps_satisfied = all(
-                            dep in completed_nodes for dep in node.depends_on
-                        )
+                        deps_satisfied = True
+                        for dep in node.depends_on:
+                            if dep in node_map:
+                                # 依赖是workflow内的node
+                                if dep not in completed_nodes:
+                                    deps_satisfied = False
+                                    break
+                            else:
+                                # 依赖是外部已存在的job（格式：job_xxx）
+                                # 从node_id提取job_id
+                                if dep.startswith("job_"):
+                                    dep_job_id = dep[4:]  # 去掉 "job_" 前缀
+                                    dep_job = scheduler.get_job(dep_job_id)
+                                    if not dep_job or dep_job.status != JobStatus.SUCCEEDED:
+                                        deps_satisfied = False
+                                        break
+                                else:
+                                    # 未知的依赖格式，视为未满足
+                                    deps_satisfied = False
+                                    break
+                        
                         if deps_satisfied:
                             ready_nodes.append(node)
                 

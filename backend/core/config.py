@@ -30,7 +30,7 @@ class Settings(BaseSettings):
     INSTANSEG_MODEL: str = "fluorescence_nuclei_1"
     TILE_SIZE: int = 512  # 优化：512×512 平衡速度与精度
     TILE_OVERLAP: int = 64  # 优化：减少重叠区域
-    BATCH_SIZE: int = 4
+    BATCH_SIZE: int = 8  # 批处理大小：一次处理多个瓦片，充分利用GPU并行能力
     
     # 两阶段分割配置
     TISSUE_MASK_LEVEL: int = 2  # Stage 1: 低分辨率生成 mask
