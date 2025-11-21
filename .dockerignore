@@ -1,0 +1,45 @@
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info
+dist
+build
+.git
+.gitignore
+.DS_Store
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# 大文件
+*.svs
+*.ndpi
+*.tif
+*.tiff
+uploads/
+results/
+logs/
+
+# 环境
+venv/
+env/
+ENV/
+.venv
+.env
+
+# 文档
+*.md
+!README.md
+
+# 测试
+tests/
+*.db
+*.sqlite
+
+

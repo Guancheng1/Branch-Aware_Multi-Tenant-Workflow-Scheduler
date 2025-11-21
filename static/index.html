@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Workflow Scheduler</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <h1>🚀 Workflow<br>Scheduler</h1>
+                <div class="user-info">
+                    <label>User ID:</label>
+                    <input type="text" id="userId" placeholder="Enter your user ID" value="user-001">
+                </div>
+            </div>
+            
+            <nav class="sidebar-nav">
+                <button class="nav-btn active" data-view="jobs">
+                    <span class="icon">📋</span>
+                    <span>Task Management</span>
+                </button>
+                <button class="nav-btn" data-view="workflows">
+                    <span class="icon">🔄</span>
+                    <span>Workflows</span>
+                </button>
+                <button class="nav-btn" data-view="stats">
+                    <span class="icon">📊</span>
+                    <span>Statistics</span>
+                </button>
+                <button class="nav-btn" data-view="upload">
+                    <span class="icon">📤</span>
+                    <span>Upload Image</span>
+                </button>
+            </nav>
+            
+            <div class="sidebar-footer">
+                <div class="status-indicator">
+                    <span class="status-dot" id="wsStatus"></span>
+                    <span class="status-text">Connection Status</span>
+                </div>
+            </div>
+        </aside>
+        
+        <!-- Main content -->
+        <main class="main-content">
+            <!-- Header -->
+            <header class="content-header">
+                <div class="header-title">
+                    <h2 id="viewTitle">Task Management</h2>
+                    <p id="viewDescription">Manage and monitor your image processing tasks</p>
+                </div>
+                <div class="header-actions">
+                    <button class="btn btn-primary" id="createJobBtn">
+                        <span>+ Create Task</span>
+                    </button>
+                    <button class="btn btn-secondary" id="refreshBtn">
+                        <span>🔄 Refresh</span>
+                    </button>
+                </div>
+            </header>
+            
+            <!-- Task view -->
+            <div class="view-container" id="jobsView">
+                <div class="jobs-grid" id="jobsGrid">
+                    <!-- Task cards will be dynamically inserted -->
+                </div>
+            </div>
+            
+            <!-- Workflow view -->
+            <div class="view-container hidden" id="workflowsView">
+                <div class="workflows-grid" id="workflowsGrid">
+                    <!-- Workflow cards will be dynamically inserted -->
+                </div>
+            </div>
+            
+            <!-- Statistics view -->
+            <div class="view-container hidden" id="statsView">
+                <div class="stats-container">
+                    <div class="stats-grid">
+                        <div class="stat-card">
+                            <div class="stat-icon">👥</div>
+                            <div class="stat-content">
+                                <div class="stat-label">Active Users</div>
+                                <div class="stat-value" id="statActiveUsers">-</div>
+                                <div class="stat-sublabel" id="statMaxUsers">Max 3 users</div>
+                            </div>
+                        </div>
+                        
+                        <div class="stat-card">
+                            <div class="stat-icon">⚙️</div>
+                            <div class="stat-content">
+                                <div class="stat-label">Active Workers</div>
+                                <div class="stat-value" id="statActiveWorkers">-</div>
+                                <div class="stat-sublabel" id="statMaxWorkers">Max 8 workers</div>
+                            </div>
+                        </div>
+                        
+                        <div class="stat-card">
+                            <div class="stat-icon">📦</div>
+                            <div class="stat-content">
+                                <div class="stat-label">Queue Depth</div>
+                                <div class="stat-value" id="statQueueDepth">-</div>
+                                <div class="stat-sublabel">Pending tasks</div>
+                            </div>
+                        </div>
+                        
+                        <div class="stat-card">
+                            <div class="stat-icon">✅</div>
+                            <div class="stat-content">
+                                <div class="stat-label">Processed Tasks</div>
+                                <div class="stat-value" id="statTotalJobs">-</div>
+                                <div class="stat-sublabel" id="statAvgLatency">-</div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="chart-container">
+                        <h3>Branch Queue Depth</h3>
+                        <div id="branchQueueChart" class="chart"></div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Upload view -->
+            <div class="view-container hidden" id="uploadView">
+                <div class="upload-container">
+                    <div class="upload-area" id="uploadArea">
+                        <div class="upload-icon">📁</div>
+                        <h3>Drag files here</h3>
+                        <p>Or click to select files</p>
+                        <input type="file" id="fileInput" accept="image/*,.svs,.ndpi,.tif,.tiff" hidden>
+                        <button class="btn btn-primary" onclick="document.getElementById('fileInput').click()">
+                            Select Files
+                        </button>
+                    </div>
+                    
+                    <div class="upload-list" id="uploadList">
+                        <!-- Uploaded files list -->
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+    
+    <!-- Create task modal -->
+    <div class="modal" id="createJobModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Create New Task</h3>
+                <button class="modal-close" onclick="closeModal('createJobModal')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label>Task Type</label>
+                    <select id="jobType">
+                        <option value="cell_segmentation">Cell Segmentation</option>
+                        <option value="tissue_mask">Tissue Mask</option>
+                    </select>
+                </div>
+                
+                <div class="form-group">
+                    <label>Branch Name</label>
+                    <input type="text" id="jobBranch" placeholder="e.g.: main, feature-1" value="main">
+                    <small>Tasks in the same branch will run serially</small>
+                </div>
+                
+                <div class="form-group">
+                    <label>Image Path</label>
+                    <input type="text" id="jobImagePath" placeholder="Enter image file path">
+                    <small>Or upload from Upload view</small>
+                </div>
+                
+                <div class="form-group">
+                    <label>Tile Size</label>
+                    <input type="number" id="jobTileSize" value="1024">
+                </div>
+                
+                <div class="form-group">
+                    <label>Overlap Size</label>
+                    <input type="number" id="jobOverlap" value="128">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeModal('createJobModal')">Cancel</button>
+                <button class="btn btn-primary" onclick="submitJob()">Create Task</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Task Detail Modal -->
+    <div class="modal" id="jobDetailModal">
+        <div class="modal-content modal-large">
+            <div class="modal-header">
+                <h3>Task Details</h3>
+                <button class="modal-close" onclick="closeModal('jobDetailModal')">&times;</button>
+            </div>
+            <div class="modal-body" id="jobDetailContent">
+                <!-- Task details will be dynamically inserted -->
+            </div>
+        </div>
+    </div>
+    
+    <!-- Results View Modal -->
+    <div class="modal" id="resultsModal">
+        <div class="modal-content modal-large">
+            <div class="modal-header">
+                <h3>Segmentation Results</h3>
+                <button class="modal-close" onclick="closeModal('resultsModal')">&times;</button>
+            </div>
+            <div class="modal-body" id="resultsContent">
+                <!-- Results content will be dynamically inserted -->
+            </div>
+        </div>
+    </div>
+    
+    <script src="/static/app.js"></script>
+</body>
+</html>
+
+
