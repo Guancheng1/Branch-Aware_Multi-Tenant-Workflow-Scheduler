@@ -9,7 +9,7 @@ import logging
 
 from backend.models.schemas import (
     Job, JobCreate, JobProgress, JobStatus,
-    Workflow, WorkflowCreate, WorkflowProgress,
+    Workflow, WorkflowCreate, WorkflowProgress, WorkflowNode,
     SystemStats, UserStats
 )
 from backend.core.scheduler import scheduler
@@ -37,13 +37,103 @@ async def create_job(
     """
     创建单个任务
     
+    如果指定了depends_on，系统将自动创建workflow并组织任务依赖关系。
+    
     Headers:
         X-User-ID: 用户唯一标识
     """
     try:
+        # 验证依赖的jobs
+        dependent_jobs = []
+        if job_create.depends_on:
+            for dep_job_id in job_create.depends_on:
+                dep_job = scheduler.get_job(dep_job_id)
+                if not dep_job:
+                    raise HTTPException(
+                        status_code=404, 
+                        detail=f"Dependent job {dep_job_id} not found"
+                    )
+                if dep_job.user_id != user_id:
+                    raise HTTPException(
+                        status_code=403, 
+                        detail=f"Cannot depend on job {dep_job_id} from another user"
+                    )
+                dependent_jobs.append(dep_job)
+        
+        # 如果有依赖关系，自动创建或加入workflow
+        workflow_id = None
+        if job_create.depends_on or job_create.workflow_name:
+            # 查找是否有现有workflow可以加入
+            # 如果依赖的job已经在workflow中，加入同一个workflow
+            existing_workflow = None
+            if dependent_jobs:
+                for dep_job in dependent_jobs:
+                    if dep_job.workflow_id:
+                        existing_workflow = workflow_manager.get_workflow(dep_job.workflow_id)
+                        if existing_workflow:
+                            break
+            
+            # 如果没有找到现有workflow，创建新的
+            if not existing_workflow:
+                workflow_name = job_create.workflow_name or f"Auto Workflow - {job_create.job_type}"
+                
+                # 创建workflow nodes
+                nodes = []
+                
+                # 添加依赖的jobs作为nodes
+                for dep_job in dependent_jobs:
+                    if not any(n.node_id == f"job_{dep_job.job_id}" for n in nodes):
+                        nodes.append(WorkflowNode(
+                            node_id=f"job_{dep_job.job_id}",
+                            job_type=dep_job.job_type,
+                            branch=dep_job.branch,
+                            image_path=dep_job.image_path,
+                            parameters=dep_job.parameters,
+                            depends_on=[]
+                        ))
+                
+                # 添加新job作为node
+                new_node = WorkflowNode(
+                    node_id=f"job_pending",  # 临时ID，稍后更新
+                    job_type=job_create.job_type,
+                    branch=job_create.branch,
+                    image_path=job_create.image_path,
+                    parameters=job_create.parameters,
+                    depends_on=[f"job_{dep_id}" for dep_id in job_create.depends_on]
+                )
+                nodes.append(new_node)
+                
+                # 创建workflow
+                workflow = Workflow(
+                    user_id=user_id,
+                    name=workflow_name,
+                    description=f"Automatically created workflow with {len(nodes)} tasks",
+                    nodes=nodes,
+                    job_ids=[dep_job.job_id for dep_job in dependent_jobs]
+                )
+                
+                workflow_id = await workflow_manager.create_workflow(workflow)
+                logger.info(f"Auto-created workflow {workflow_id} for job with dependencies")
+            else:
+                # 加入现有workflow
+                workflow_id = existing_workflow.workflow_id
+                
+                # 添加新node到现有workflow
+                new_node = WorkflowNode(
+                    node_id=f"job_pending",
+                    job_type=job_create.job_type,
+                    branch=job_create.branch,
+                    image_path=job_create.image_path,
+                    parameters=job_create.parameters,
+                    depends_on=[f"job_{dep_id}" for dep_id in job_create.depends_on]
+                )
+                existing_workflow.nodes.append(new_node)
+                logger.info(f"Added job to existing workflow {workflow_id}")
+        
         # 创建任务对象
         job = Job(
             user_id=user_id,
+            workflow_id=workflow_id,
             job_type=job_create.job_type,
             branch=job_create.branch,
             image_path=job_create.image_path,
@@ -53,10 +143,23 @@ async def create_job(
         # 提交到调度器
         job_id = await scheduler.submit_job(job)
         
-        logger.info(f"Job {job_id} created by user {user_id}")
+        # 更新workflow中的node_id（从pending到实际job_id）
+        if workflow_id:
+            workflow = workflow_manager.get_workflow(workflow_id)
+            if workflow:
+                for node in workflow.nodes:
+                    if node.node_id == "job_pending":
+                        node.node_id = f"job_{job_id}"
+                        break
+                workflow.job_ids.append(job_id)
+        
+        logger.info(f"Job {job_id} created by user {user_id}" + 
+                   (f" in workflow {workflow_id}" if workflow_id else ""))
         
         return job
     
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error creating job: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))

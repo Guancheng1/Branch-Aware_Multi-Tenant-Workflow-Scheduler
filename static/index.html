@@ -184,6 +184,29 @@
                     <label>Overlap Size</label>
                     <input type="number" id="jobOverlap" value="128">
                 </div>
+                
+                <div class="form-group" style="margin-top: 1.5rem; padding-top: 1.5rem; border-top: 1px solid var(--border-color);">
+                    <label style="display: flex; align-items: center; cursor: pointer;">
+                        <input type="checkbox" id="hasDependencies" onchange="toggleDependenciesSection()" style="margin-right: 0.5rem;">
+                        <span>This task depends on other tasks</span>
+                    </label>
+                </div>
+                
+                <div id="dependenciesSection" class="form-group" style="display: none; padding-left: 1.5rem; border-left: 3px solid var(--primary-color);">
+                    <label>Select dependent tasks:</label>
+                    <div id="dependentJobsList" style="max-height: 200px; overflow-y: auto; border: 1px solid var(--border-color); border-radius: 4px; padding: 0.5rem;">
+                        <div style="color: var(--text-muted); padding: 1rem; text-align: center;">
+                            Loading available tasks...
+                        </div>
+                    </div>
+                    <small>Selected tasks must complete before this task starts</small>
+                    
+                    <div class="form-group" style="margin-top: 1rem;">
+                        <label>Workflow Name (optional)</label>
+                        <input type="text" id="workflowName" placeholder="e.g.: Cell Analysis Pipeline">
+                        <small>Group related tasks into a named workflow</small>
+                    </div>
+                </div>
             </div>
             <div class="modal-footer">
                 <button class="btn btn-secondary" onclick="closeModal('createJobModal')">Cancel</button>
@@ -214,6 +237,19 @@
             </div>
             <div class="modal-body" id="resultsContent">
                 <!-- Results content will be dynamically inserted -->
+            </div>
+        </div>
+    </div>
+    
+    <!-- Workflow Detail Modal -->
+    <div class="modal" id="workflowDetailModal">
+        <div class="modal-content modal-large">
+            <div class="modal-header">
+                <h3>Workflow Details</h3>
+                <button class="modal-close" onclick="closeModal('workflowDetailModal')">&times;</button>
+            </div>
+            <div class="modal-body" id="workflowDetailContent">
+                <!-- Workflow details will be dynamically inserted -->
             </div>
         </div>
     </div>

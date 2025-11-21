@@ -125,11 +125,88 @@ function refreshCurrentView() {
 function initializeButtons() {
     document.getElementById('createJobBtn').addEventListener('click', () => {
         openModal('createJobModal');
+        loadAvailableJobsForDependency();
     });
     
     document.getElementById('refreshBtn').addEventListener('click', () => {
         refreshCurrentView();
     });
+}
+
+// Toggle dependencies section
+function toggleDependenciesSection() {
+    const checkbox = document.getElementById('hasDependencies');
+    const section = document.getElementById('dependenciesSection');
+    
+    if (checkbox.checked) {
+        section.style.display = 'block';
+        loadAvailableJobsForDependency();
+    } else {
+        section.style.display = 'none';
+    }
+}
+
+// Load available jobs for dependency selection
+async function loadAvailableJobsForDependency() {
+    const listContainer = document.getElementById('dependentJobsList');
+    
+    try {
+        const response = await fetch(`${API_BASE}/jobs`, {
+            headers: { 'X-User-ID': currentUserId }
+        });
+        
+        const jobs = await response.json();
+        
+        // Filter jobs that are completed or running (可以作为依赖)
+        const availableJobs = jobs.filter(job => 
+            job.status === 'SUCCEEDED' || job.status === 'RUNNING' || job.status === 'PENDING'
+        );
+        
+        if (availableJobs.length === 0) {
+            listContainer.innerHTML = `
+                <div style="color: var(--text-muted); padding: 1rem; text-align: center;">
+                    No available tasks to depend on
+                </div>
+            `;
+            return;
+        }
+        
+        // Render job checkboxes
+        listContainer.innerHTML = availableJobs.map(job => {
+            const typeText = {
+                'cell_segmentation': 'Cell Segmentation',
+                'tissue_mask': 'Tissue Mask'
+            }[job.job_type] || job.job_type;
+            
+            const statusClass = job.status.toLowerCase();
+            
+            return `
+                <div style="padding: 0.75rem; border-bottom: 1px solid var(--border-color); display: flex; align-items: center;">
+                    <input type="checkbox" 
+                           id="dep_${job.job_id}" 
+                           value="${job.job_id}" 
+                           class="dependency-checkbox"
+                           style="margin-right: 0.75rem;">
+                    <label for="dep_${job.job_id}" style="flex: 1; cursor: pointer; margin: 0;">
+                        <div style="font-weight: 500;">${typeText}</div>
+                        <div style="font-size: 0.75rem; color: var(--text-muted);">
+                            ID: ${job.job_id.substring(0, 8)}... | 
+                            Branch: ${job.branch} | 
+                            <span class="job-status ${statusClass}" style="display: inline-block; padding: 0.125rem 0.5rem; font-size: 0.7rem;">${job.status}</span>
+                        </div>
+                    </label>
+                </div>
+            `;
+        }).join('');
+        
+    } catch (error) {
+        console.error('Error loading jobs for dependency:', error);
+        listContainer.innerHTML = `
+            <div style="color: var(--error-color); padding: 1rem; text-align: center;">
+                Failed to load tasks
+            </div>
+        `;
+    }
 }
 
 // WebSocket connection
@@ -441,34 +518,71 @@ async function submitJob() {
         return;
     }
     
+    // Collect dependencies if enabled
+    const hasDependencies = document.getElementById('hasDependencies').checked;
+    let dependsOn = [];
+    let workflowName = null;
+    
+    if (hasDependencies) {
+        const checkboxes = document.querySelectorAll('.dependency-checkbox:checked');
+        dependsOn = Array.from(checkboxes).map(cb => cb.value);
+        
+        const workflowNameInput = document.getElementById('workflowName');
+        if (workflowNameInput && workflowNameInput.value.trim()) {
+            workflowName = workflowNameInput.value.trim();
+        }
+    }
+    
     try {
-        const response = await fetch(`${API_BASE}/jobs`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'X-User-ID': currentUserId
-            },
-            body: JSON.stringify({
+        const jobData = {
                 job_type: jobType,
                 branch: branch,
                 image_path: imagePath,
                 parameters: {
                     tile_size: tileSize,
                     overlap: overlap
-                }
-            })
+            },
+            depends_on: dependsOn
+        };
+        
+        if (workflowName) {
+            jobData.workflow_name = workflowName;
+        }
+        
+        const response = await fetch(`${API_BASE}/jobs`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-User-ID': currentUserId
+            },
+            body: JSON.stringify(jobData)
         });
         
         if (response.ok) {
+            const result = await response.json();
             closeModal('createJobModal');
+            
+            // Reset form
+            document.getElementById('hasDependencies').checked = false;
+            document.getElementById('dependenciesSection').style.display = 'none';
+            if (document.getElementById('workflowName')) {
+                document.getElementById('workflowName').value = '';
+            }
+            
             loadJobs();
+            
+            if (result.workflow_id) {
+                showSuccess('Task created successfully and added to workflow');
+            } else {
             showSuccess('Task created successfully');
+            }
         } else {
-            throw new Error('Failed to create job');
+            const errorData = await response.json();
+            throw new Error(errorData.detail || 'Failed to create job');
         }
     } catch (error) {
         console.error('Error creating job:', error);
-        showError('Failed to create task');
+        showError(error.message || 'Failed to create task');
     }
 }
 
@@ -495,25 +609,45 @@ function renderWorkflows(workflows) {
             <div class="empty-state">
                 <div class="empty-state-icon">🔄</div>
                 <h3>No workflows yet</h3>
-                <p>Workflows can combine multiple tasks into a DAG</p>
+                <p>Create tasks with dependencies to automatically build workflows</p>
+                <p style="margin-top: 1rem; font-size: 0.875rem; color: var(--text-muted);">
+                    💡 Tip: Check "This task depends on other tasks" when creating a job
+                </p>
             </div>
         `;
         return;
     }
     
-    grid.innerHTML = workflows.map(wf => `
-        <div class="job-card">
+    grid.innerHTML = workflows.map(wf => {
+        // Build DAG visualization
+        const dagHtml = buildSimpleDAG(wf.nodes);
+        
+        return `
+            <div class="job-card" onclick="showWorkflowDetail('${wf.workflow_id}')" style="cursor: pointer;">
             <div class="job-card-header">
-                <div class="job-type">Workflow</div>
+                    <div class="job-type">🔄 Workflow</div>
                 <span class="job-status ${wf.status.toLowerCase()}">${wf.status}</span>
             </div>
             <h3>${wf.name}</h3>
-            <p style="color: var(--text-muted); font-size: 0.875rem;">${wf.description || ''}</p>
-            <div style="margin-top: 1rem;">
+                <p style="color: var(--text-muted); font-size: 0.875rem; margin-bottom: 1rem;">${wf.description || ''}</p>
+                
+                <div style="background: #f8f9fa; padding: 0.75rem; border-radius: 6px; margin-bottom: 1rem;">
+                    <div style="font-size: 0.75rem; font-weight: 600; color: var(--text-muted); margin-bottom: 0.5rem;">
+                        DAG STRUCTURE:
+                    </div>
+                    ${dagHtml}
+                </div>
+                
+                <div style="display: flex; gap: 1rem; margin-bottom: 1rem;">
+                    <div>
                 <strong>${wf.nodes.length}</strong> nodes
-                <strong style="margin-left: 1rem;">${wf.job_ids.length}</strong> tasks
             </div>
-            <div class="job-progress" style="margin-top: 1rem;">
+                    <div>
+                        <strong>${wf.job_ids.length}</strong> tasks
+                    </div>
+                </div>
+                
+                <div class="job-progress">
                 <div class="progress-bar">
                     <div class="progress-fill" style="width: ${wf.progress_percent}%"></div>
                 </div>
@@ -522,7 +656,157 @@ function renderWorkflows(workflows) {
                 </div>
             </div>
         </div>
-    `).join('');
+        `;
+    }).join('');
+}
+
+// Build a simple text-based DAG visualization
+function buildSimpleDAG(nodes) {
+    if (!nodes || nodes.length === 0) {
+        return '<div style="color: var(--text-muted); font-size: 0.75rem;">No nodes</div>';
+    }
+    
+    // Group nodes by level (based on dependencies)
+    const levels = [];
+    const processed = new Set();
+    const nodeMap = {};
+    
+    nodes.forEach(node => {
+        nodeMap[node.node_id] = node;
+    });
+    
+    // Find root nodes (no dependencies)
+    let currentLevel = nodes.filter(n => !n.depends_on || n.depends_on.length === 0);
+    
+    while (currentLevel.length > 0) {
+        levels.push(currentLevel);
+        currentLevel.forEach(n => processed.add(n.node_id));
+        
+        // Find next level (nodes whose dependencies are all processed)
+        currentLevel = nodes.filter(node => 
+            !processed.has(node.node_id) &&
+            node.depends_on &&
+            node.depends_on.every(dep => processed.has(dep))
+        );
+    }
+    
+    // Render levels
+    return levels.map((level, idx) => {
+        const nodeBoxes = level.map(node => {
+            const jobId = node.node_id.replace('job_', '');
+            const typeIcon = node.job_type === 'cell_segmentation' ? '🔬' : '🎯';
+            const typeShort = node.job_type === 'cell_segmentation' ? 'Seg' : 'Mask';
+            
+            return `
+                <div style="display: inline-block; background: white; border: 1px solid var(--border-color); border-radius: 4px; padding: 0.25rem 0.5rem; margin: 0.125rem; font-size: 0.7rem;">
+                    ${typeIcon} ${typeShort}
+                    <span style="color: var(--text-muted);">(${jobId.substring(0, 6)})</span>
+                </div>
+            `;
+        }).join('');
+        
+        const arrow = idx < levels.length - 1 ? '<div style="text-align: center; color: var(--text-muted); font-size: 0.8rem; margin: 0.25rem 0;">↓</div>' : '';
+        
+        return nodeBoxes + arrow;
+    }).join('');
+}
+
+// Show workflow detail
+async function showWorkflowDetail(workflowId) {
+    try {
+        const response = await fetch(`${API_BASE}/workflows/${workflowId}`, {
+            headers: { 'X-User-ID': currentUserId }
+        });
+        
+        if (!response.ok) {
+            throw new Error('Failed to load workflow');
+        }
+        
+        const workflow = await response.json();
+        renderWorkflowDetail(workflow);
+        openModal('workflowDetailModal');
+    } catch (error) {
+        console.error('Error loading workflow:', error);
+        showError('Failed to load workflow details');
+    }
+}
+
+function renderWorkflowDetail(workflow) {
+    const content = document.getElementById('workflowDetailContent');
+    
+    const dagHtml = buildDetailedDAG(workflow.nodes);
+    
+    content.innerHTML = `
+        <div style="margin-bottom: 1.5rem;">
+            <h4>Workflow Information</h4>
+            <div style="display: grid; gap: 0.75rem; margin-top: 1rem;">
+                <div><strong>Name:</strong> ${workflow.name}</div>
+                <div><strong>Status:</strong> <span class="job-status ${workflow.status.toLowerCase()}">${workflow.status}</span></div>
+                <div><strong>Description:</strong> ${workflow.description || 'N/A'}</div>
+                <div><strong>Workflow ID:</strong> <code>${workflow.workflow_id}</code></div>
+                <div><strong>Progress:</strong> ${workflow.progress_percent.toFixed(1)}%</div>
+            </div>
+        </div>
+        
+        <div style="margin-bottom: 1.5rem;">
+            <h4>DAG Structure</h4>
+            <div style="background: #f8f9fa; padding: 1rem; border-radius: 8px; margin-top: 1rem;">
+                ${dagHtml}
+            </div>
+        </div>
+        
+        <div style="margin-bottom: 1.5rem;">
+            <h4>Tasks (${workflow.job_ids.length})</h4>
+            <div style="margin-top: 1rem;">
+                ${workflow.job_ids.map(jobId => `
+                    <div style="padding: 0.75rem; border: 1px solid var(--border-color); border-radius: 6px; margin-bottom: 0.5rem;">
+                        <strong>Job ID:</strong> ${jobId}
+                        <button class="btn btn-sm btn-secondary" onclick="showJobDetail('${jobId}'); event.stopPropagation();" style="margin-left: 1rem;">
+                            View Details
+                        </button>
+                    </div>
+                `).join('')}
+            </div>
+        </div>
+    `;
+}
+
+function buildDetailedDAG(nodes) {
+    if (!nodes || nodes.length === 0) {
+        return '<div style="color: var(--text-muted);">No nodes</div>';
+    }
+    
+    return nodes.map(node => {
+        const jobId = node.node_id.replace('job_', '');
+        const typeText = node.job_type === 'cell_segmentation' ? 'Cell Segmentation' : 'Tissue Mask';
+        const typeIcon = node.job_type === 'cell_segmentation' ? '🔬' : '🎯';
+        
+        const depsHtml = node.depends_on && node.depends_on.length > 0
+            ? `<div style="margin-top: 0.5rem; padding-top: 0.5rem; border-top: 1px solid #e0e0e0;">
+                   <strong style="font-size: 0.75rem; color: var(--text-muted);">Depends on:</strong>
+                   ${node.depends_on.map(dep => `
+                       <span style="display: inline-block; background: #fff3cd; padding: 0.125rem 0.5rem; border-radius: 3px; margin: 0.125rem; font-size: 0.7rem;">
+                           ${dep.replace('job_', '').substring(0, 8)}
+                       </span>
+                   `).join('')}
+               </div>`
+            : '';
+        
+        return `
+            <div style="background: white; border: 2px solid var(--border-color); border-radius: 8px; padding: 1rem; margin-bottom: 0.75rem;">
+                <div style="display: flex; align-items: center; gap: 0.5rem;">
+                    <span style="font-size: 1.5rem;">${typeIcon}</span>
+                    <div style="flex: 1;">
+                        <div style="font-weight: 600;">${typeText}</div>
+                        <div style="font-size: 0.75rem; color: var(--text-muted); font-family: monospace;">
+                            Branch: ${node.branch} | ID: ${jobId.substring(0, 16)}...
+                        </div>
+                    </div>
+                </div>
+                ${depsHtml}
+            </div>
+        `;
+    }).join('');
 }
 
 // Statistics

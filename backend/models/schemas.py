@@ -51,6 +51,8 @@ class JobCreate(BaseModel):
     branch: str = Field(..., description="分支名称，同一分支的任务串行执行")
     image_path: str = Field(..., description="图像文件路径")
     parameters: Dict[str, Any] = Field(default_factory=dict, description="任务参数")
+    depends_on: List[str] = Field(default_factory=list, description="依赖的job_id列表，系统将自动创建workflow")
+    workflow_name: Optional[str] = Field(None, description="工作流名称（可选），用于将多个相关任务组织在一起")
 
 
 class Job(BaseModel):

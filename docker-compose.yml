@@ -24,7 +24,7 @@ services:
     environment:
       - HOST=0.0.0.0
       - PORT=8000
-      - MAX_WORKERS=8
+      - MAX_WORKERS=5
       - MAX_ACTIVE_USERS=3
       - REDIS_HOST=redis
       - REDIS_PORT=6379
@@ -35,6 +35,7 @@ services:
       - ./uploads:/app/uploads
       - ./results:/app/results
       - ./logs:/app/logs
+      - ./static:/app/static
     networks:
       - workflow-network
     depends_on:

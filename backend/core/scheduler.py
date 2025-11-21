@@ -28,11 +28,11 @@ class BranchAwareScheduler:
         # 全局任务存储
         self.jobs: Dict[str, Job] = {}
         
-        # 按分支组织的任务队列
-        self.branch_queues: Dict[str, deque] = defaultdict(deque)
+        # 按分支组织的任务队列 - 使用 (user_id, branch) 作为key实现用户级别的branch隔离
+        self.branch_queues: Dict[tuple, deque] = defaultdict(deque)
         
-        # 当前每个分支正在运行的任务
-        self.branch_running: Dict[str, Optional[str]] = {}
+        # 当前每个分支正在运行的任务 - 使用 (user_id, branch) 作为key
+        self.branch_running: Dict[tuple, Optional[str]] = {}
         
         # 按用户组织的任务
         self.user_jobs: Dict[str, Set[str]] = defaultdict(set)
@@ -100,11 +100,12 @@ class BranchAwareScheduler:
         self.jobs[job_id] = job
         self.user_jobs[job.user_id].add(job_id)
         
-        # 将任务加入对应分支的队列
-        self.branch_queues[job.branch].append(job_id)
+        # 将任务加入对应分支的队列 - 使用 (user_id, branch) 确保用户级别隔离
+        branch_key = (job.user_id, job.branch)
+        self.branch_queues[branch_key].append(job_id)
         
         print(f"📥 [SCHEDULER] Job {job_id} submitted to branch '{job.branch}' by user {job.user_id}")
-        print(f"📊 [SCHEDULER] Branch '{job.branch}' queue depth: {len(self.branch_queues[job.branch])}")
+        print(f"📊 [SCHEDULER] User {job.user_id} branch '{job.branch}' queue depth: {len(self.branch_queues[branch_key])}")
         logger.info(f"Job {job_id} submitted to branch '{job.branch}' by user {job.user_id}")
         
         return job_id
@@ -134,9 +135,10 @@ class BranchAwareScheduler:
             logger.warning(f"Cannot cancel job {job_id} with status {job.status}")
             return False
         
-        # 从分支队列中移除
+        # 从分支队列中移除 - 使用 (user_id, branch) key
         try:
-            self.branch_queues[job.branch].remove(job_id)
+            branch_key = (job.user_id, job.branch)
+            self.branch_queues[branch_key].remove(job_id)
             job.status = JobStatus.CANCELLED
             job.completed_at = datetime.now()
             logger.info(f"Job {job_id} cancelled by user {user_id}")
@@ -152,7 +154,11 @@ class BranchAwareScheduler:
             try:
                 loop_count += 1
                 if loop_count % 100 == 0:  # 每100次循环打印一次
-                    print(f"🔄 [SCHEDULER] Loop #{loop_count}: {len(self.jobs)} jobs, {len(self.running_jobs)} running")
+                    print(f"🔄 [SCHEDULER] Loop #{loop_count}: "
+                          f"Active Users: {len(self.active_users)}/{settings.MAX_ACTIVE_USERS}, "
+                          f"Workers: {len(self.running_jobs)}/{settings.MAX_WORKERS}, "
+                          f"Total Jobs: {len(self.jobs)}, "
+                          f"Waiting Users: {len(self.waiting_users)}")
                 await self._schedule_next_jobs()
                 await asyncio.sleep(0.1)  # 避免CPU过载
             except asyncio.CancelledError:
@@ -173,13 +179,15 @@ class BranchAwareScheduler:
         # 2. 如果有等待的用户，尝试激活
         self._activate_waiting_users()
         
-        # 3. 为每个分支尝试调度任务
-        for branch, queue in list(self.branch_queues.items()):
+        # 3. 为每个分支尝试调度任务 - branch_key现在是 (user_id, branch) 元组
+        for branch_key, queue in list(self.branch_queues.items()):
             if not queue:
                 continue
             
+            user_id, branch_name = branch_key
+            
             # 如果该分支已有任务在运行，跳过
-            if self.branch_running.get(branch):
+            if self.branch_running.get(branch_key):
                 continue
             
             # 获取队列头部的任务
@@ -207,22 +215,26 @@ class BranchAwareScheduler:
                     break  # 等待worker空闲
                 
                 # 移除队列头部并执行任务
-                print(f"✨ [SCHEDULER] Scheduling job {job_id} from branch '{branch}'")
+                print(f"✨ [SCHEDULER] Scheduling job {job_id} from user {user_id} branch '{branch_name}'")
                 queue.popleft()
                 await self._execute_job(job)
                 break
     
     def _cleanup_completed_users(self):
-        """清理没有运行中任务的用户"""
+        """清理所有任务都已完成的用户"""
         users_to_remove = set()
         for user_id in self.active_users:
             user_job_ids = self.user_jobs.get(user_id, set())
-            has_running = any(
-                self.jobs.get(jid) and self.jobs[jid].status == JobStatus.RUNNING
+            # 检查是否有未完成的任务（PENDING 或 RUNNING）
+            has_active_jobs = any(
+                self.jobs.get(jid) and self.jobs[jid].status in [JobStatus.PENDING, JobStatus.RUNNING]
                 for jid in user_job_ids
             )
-            if not has_running:
+            # 只有当用户所有任务都完成时才移除
+            if not has_active_jobs:
                 users_to_remove.add(user_id)
+                print(f"🧹 [SCHEDULER] User {user_id} removed from active_users (all jobs completed)")
+                logger.info(f"User {user_id} removed from active_users (all jobs completed)")
         
         self.active_users -= users_to_remove
     
@@ -232,6 +244,7 @@ class BranchAwareScheduler:
                and self.waiting_users):
             user_id = self.waiting_users.popleft()
             self.active_users.add(user_id)
+            print(f"✨ [SCHEDULER] User {user_id} activated from waiting queue ({len(self.active_users)}/{settings.MAX_ACTIVE_USERS} active)")
             logger.info(f"User {user_id} activated from waiting queue")
     
     def _can_user_execute(self, user_id: str) -> bool:
@@ -249,13 +262,15 @@ class BranchAwareScheduler:
         
         if len(self.active_users) < settings.MAX_ACTIVE_USERS:
             self.active_users.add(user_id)
-            logger.info(f"User {user_id} added to active users")
+            print(f"👤 [SCHEDULER] User {user_id} added to active users ({len(self.active_users)}/{settings.MAX_ACTIVE_USERS} active)")
+            logger.info(f"User {user_id} added to active users ({len(self.active_users)}/{settings.MAX_ACTIVE_USERS})")
             return True
         
         # 用户需要等待
         if user_id not in self.waiting_users:
             self.waiting_users.append(user_id)
-            logger.info(f"User {user_id} added to waiting queue")
+            print(f"⏳ [SCHEDULER] User {user_id} added to waiting queue (active users full: {list(self.active_users)})")
+            logger.info(f"User {user_id} added to waiting queue (waiting: {len(self.waiting_users)})")
         
         return False
     
@@ -269,10 +284,13 @@ class BranchAwareScheduler:
         job.status = JobStatus.RUNNING
         job.started_at = datetime.now()
         self.running_jobs.add(job.job_id)
-        self.branch_running[job.branch] = job.job_id
         
-        print(f"🚀 [SCHEDULER] Starting job {job.job_id} (branch: {job.branch}, user: {job.user_id})")
-        logger.info(f"Starting job {job.job_id} (branch: {job.branch}, user: {job.user_id})")
+        # 使用 (user_id, branch) 作为key标记该分支正在运行任务
+        branch_key = (job.user_id, job.branch)
+        self.branch_running[branch_key] = job.job_id
+        
+        print(f"🚀 [SCHEDULER] Starting job {job.job_id} (user: {job.user_id}, branch: {job.branch})")
+        logger.info(f"Starting job {job.job_id} (user: {job.user_id}, branch: {job.branch})")
         
         # 创建任务执行协程
         task = asyncio.create_task(self._run_job_with_semaphore(job))
@@ -308,8 +326,12 @@ class BranchAwareScheduler:
                 # 清理
                 print(f"🧹 [SCHEDULER] Cleaning up job {job.job_id}")
                 self.running_jobs.discard(job.job_id)
-                if self.branch_running.get(job.branch) == job.job_id:
-                    self.branch_running[job.branch] = None
+                
+                # 使用 (user_id, branch) key 清理 branch_running
+                branch_key = (job.user_id, job.branch)
+                if self.branch_running.get(branch_key) == job.job_id:
+                    self.branch_running[branch_key] = None
+                
                 self.job_tasks.pop(job.job_id, None)
                 
                 # 更新统计
@@ -338,10 +360,11 @@ class BranchAwareScheduler:
             else 0.0
         )
         
-        # 计算每个分支的队列深度
+        # 计算每个分支的队列深度 - 现在包含用户信息
+        # key 是 (user_id, branch)，转换为 "user_id:branch" 格式便于显示
         per_branch_depth = {
-            branch: len(queue)
-            for branch, queue in self.branch_queues.items()
+            f"{user_id}:{branch}": len(queue)
+            for (user_id, branch), queue in self.branch_queues.items()
             if queue
         }
         

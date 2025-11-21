@@ -41,11 +41,16 @@ logger = logging.getLogger(__name__)
 
 
 class InstanSegService:
-    """InstanSeg服务 - 处理大图像分割"""
+    """InstanSeg服务 - 处理大图像分割（两阶段优化）"""
     
     def __init__(self):
         self.model = None
         self.device = torch.device(settings.DEVICE if INSTANSEG_AVAILABLE and torch.cuda.is_available() else "cpu")
+        self.pixel_size = 1.0  # 默认pixel_size，会在加载WSI时更新
+        self.current_level = 0  # 当前使用的level
+        self.tissue_mask = None  # Stage 1: 低分辨率 tissue mask
+        self.mask_level = 0  # mask 对应的 level
+        self.seg_level = 0   # 分割使用的 level
         logger.info(f"InstanSegService initialized with device: {self.device}")
     
     async def initialize(self):
@@ -105,7 +110,9 @@ class InstanSegService:
         progress_callback = None
     ) -> Dict:
         """
-        分割大图像
+        两阶段分割大图像：
+        Stage 1: 低分辨率生成 tissue mask（快速）
+        Stage 2: 基于 mask 在高分辨率上选择性分割（精确）
         
         Args:
             image_path: 输入图像路径
@@ -117,7 +124,7 @@ class InstanSegService:
         Returns:
             结果字典，包含分割信息
         """
-        print(f"🖼️ [INSTANSEG] Starting segment_large_image for: {image_path}")
+        print(f"🖼️ [INSTANSEG] Starting TWO-STAGE segment_large_image for: {image_path}")
         
         tile_size = tile_size or settings.TILE_SIZE
         overlap = overlap or settings.TILE_OVERLAP
@@ -127,59 +134,132 @@ class InstanSegService:
         output_path.mkdir(parents=True, exist_ok=True)
         print(f"📁 [INSTANSEG] Output directory: {output_path}")
         
-        # 读取图像
-        if progress_callback:
-            await progress_callback(0, 100, "Loading image...")
+        import time
+        start_time = time.time()
         
-        print(f"📖 [INSTANSEG] Loading image from {image_path}")
-        image, slide = await self._load_image(image_path)
+        # ====== Stage 1: 生成低分辨率 tissue mask ======
+        print(f"\n🎯 [STAGE 1] Generating tissue mask at low resolution...")
+        mask_start = time.time()
+        
+        # 加载低分辨率图像用于生成 mask
+        mask_image, slide = await self._load_image_at_level(
+            image_path, 
+            level=settings.TISSUE_MASK_LEVEL
+        )
+        self.mask_level = settings.TISSUE_MASK_LEVEL
+        
+        # 生成 tissue mask
+        loop = asyncio.get_event_loop()
+        self.tissue_mask = await loop.run_in_executor(
+            None,
+            self._generate_tissue_mask_sync,
+            mask_image
+        )
+        
+        mask_time = time.time() - mask_start
+        tissue_percentage = np.sum(self.tissue_mask > 0) / self.tissue_mask.size * 100
+        print(f"✅ [STAGE 1] Tissue mask generated in {mask_time:.2f}s")
+        print(f"📊 [STAGE 1] Tissue coverage: {tissue_percentage:.2f}%")
+        
+        # 保存 mask 可视化
+        mask_path = output_path / "tissue_mask.png"
+        await loop.run_in_executor(None, cv2.imwrite, str(mask_path), self.tissue_mask)
+        
+        # ====== Stage 2: 高分辨率细胞分割（仅在有组织的区域） ======
+        print(f"\n🎯 [STAGE 2] High-resolution cell segmentation...")
+        seg_start = time.time()
+        
+        # 加载高分辨率图像用于分割
+        image, _ = await self._load_image_at_level(
+            image_path,
+            level=settings.CELL_SEG_LEVEL
+        )
+        self.seg_level = settings.CELL_SEG_LEVEL
         height, width = image.shape[:2]
         
-        print(f"📐 [INSTANSEG] Image loaded, size: {width}x{height}")
+        print(f"📐 [STAGE 2] Image loaded, size: {width}x{height}")
         logger.info(f"Processing image {image_path}, size: {width}x{height}")
         
         # 计算瓦片
         tiles = self._calculate_tiles(width, height, tile_size, overlap)
         total_tiles = len(tiles)
         
-        print(f"🔢 [INSTANSEG] Image divided into {total_tiles} tiles")
-        logger.info(f"Image divided into {total_tiles} tiles")
+        print(f"🔢 [STAGE 2] Image divided into {total_tiles} tiles (before filtering)")
+        
+        # 基于 tissue mask 过滤 tiles
+        filtered_tiles = []
+        for tile_coord in tiles:
+            if self._should_process_tile_by_mask(tile_coord, width, height):
+                filtered_tiles.append(tile_coord)
+        
+        skipped_tiles = total_tiles - len(filtered_tiles)
+        print(f"🚀 [OPTIMIZATION] Filtered out {skipped_tiles}/{total_tiles} tiles "
+              f"({skipped_tiles/total_tiles*100:.1f}%) using tissue mask")
+        print(f"🔢 [STAGE 2] Will process {len(filtered_tiles)} tiles with tissue")
+        logger.info(f"Tile filtering: {total_tiles} → {len(filtered_tiles)} "
+                   f"(speedup: {total_tiles/max(len(filtered_tiles), 1):.2f}x)")
         
         # 处理瓦片
         all_masks = []
         all_labels = []
         processed = 0
+        tiles_with_cells = 0
+        tiles_skipped_density = 0
         
-        for i, (x, y, w, h) in enumerate(tiles):
+        for i, (x, y, w, h) in enumerate(filtered_tiles):
             if progress_callback:
                 await progress_callback(
-                    processed, total_tiles,
-                    f"Processing tile {i+1}/{total_tiles}"
+                    processed, 
+                    len(filtered_tiles),
+                    f"Processing tile {i+1}/{len(filtered_tiles)}"
                 )
             
-            print(f"🧩 [INSTANSEG] Processing tile {i+1}/{total_tiles} at ({x},{y},{w},{h})")
+            print(f"🧩 [STAGE 2] Processing tile {i+1}/{len(filtered_tiles)} at ({x},{y},{w},{h})")
             
             # 提取瓦片
             tile_image = image[y:y+h, x:x+w]
             
+            # 快速密度检查（第二层过滤）
+            if not self._should_process_tile_by_density(tile_image):
+                print(f"⏭️ [OPTIMIZATION] Skipped tile {i+1} (low density)")
+                tiles_skipped_density += 1
+                processed += 1
+                continue
+            
             # 分割瓦片
             masks, labels = await self._segment_tile(tile_image, x, y)
             
-            if masks is not None:
+            if masks is not None and len(masks) > 0:
                 all_masks.extend(masks)
                 all_labels.extend(labels)
-                print(f"✓ [INSTANSEG] Tile {i+1} processed, found {len(masks)} cells")
+                tiles_with_cells += 1
+                print(f"✓ [STAGE 2] Tile {i+1} processed, found {len(masks)} cells")
             else:
-                print(f"✗ [INSTANSEG] Tile {i+1} returned no results")
+                print(f"✗ [STAGE 2] Tile {i+1} returned no results")
             
             processed += 1
+        
+        seg_time = time.time() - seg_start
+        total_time = time.time() - start_time
+        
+        print(f"\n📊 [STATISTICS]")
+        print(f"  Total tiles: {total_tiles}")
+        print(f"  Filtered by mask: {skipped_tiles} ({skipped_tiles/total_tiles*100:.1f}%)")
+        print(f"  Filtered by density: {tiles_skipped_density} ({tiles_skipped_density/max(len(filtered_tiles), 1)*100:.1f}%)")
+        print(f"  Actually processed: {tiles_with_cells}")
+        print(f"  Total cells found: {len(all_masks)}")
+        print(f"  Stage 1 time: {mask_time:.2f}s")
+        print(f"  Stage 2 time: {seg_time:.2f}s")
+        print(f"  Total time: {total_time:.2f}s")
+        print(f"  Theoretical speedup: {total_tiles/max(tiles_with_cells, 1):.2f}x")
         
         print(f"🧬 [INSTANSEG] All tiles processed. Total masks: {len(all_masks)}")
         
         # 合并结果
         if progress_callback:
             await progress_callback(
-                total_tiles, total_tiles,
+                len(filtered_tiles),
+                len(filtered_tiles),
                 "Merging results..."
             )
         
@@ -188,6 +268,45 @@ class InstanSegService:
             all_masks, all_labels, width, height, overlap
         )
         print(f"✅ [INSTANSEG] Results merged. Total cells: {len(merged_results.get('masks', []))}")
+        
+        # 保存结果
+        print(f"💾 [INSTANSEG] Saving results...")
+        result_path = await self._save_results(
+            merged_results, output_path, image_path
+        )
+        print(f"✅ [INSTANSEG] Results saved to: {result_path}")
+        
+        # 生成可视化
+        print(f"🎨 [INSTANSEG] Generating visualization...")
+        vis_path = await self._generate_visualization(
+            image, merged_results, output_path
+        )
+        print(f"✅ [INSTANSEG] Visualization saved to: {vis_path}")
+        
+        if slide:
+            slide.close()
+        
+        result = {
+            "image_path": image_path,
+            "width": width,
+            "height": height,
+            "total_cells": len(merged_results.get("masks", [])),
+            "total_tiles": total_tiles,
+            "filtered_tiles": skipped_tiles,
+            "filtered_by_density": tiles_skipped_density,
+            "processed_tiles": tiles_with_cells,
+            "speedup": round(total_tiles/max(tiles_with_cells, 1), 2),
+            "stage1_time": round(mask_time, 2),
+            "stage2_time": round(seg_time, 2),
+            "total_time": round(total_time, 2),
+            "result_path": str(result_path),
+            "visualization_path": str(vis_path),
+            "mask_path": str(mask_path),
+            "completed_at": datetime.now().isoformat()
+        }
+        
+        print(f"🎉 [INSTANSEG] Two-stage segmentation complete! Result: {result}")
+        return result
         
         # 保存结果
         print(f"💾 [INSTANSEG] Saving results...")
@@ -222,12 +341,29 @@ class InstanSegService:
     
     async def _load_image(self, image_path: str) -> Tuple[np.ndarray, Optional[any]]:
         """
-        加载图像（支持WSI格式）
+        加载图像（支持WSI格式）- 使用默认 level 1
         
         Returns:
             (image_array, slide_object)
         """
-        print(f"📂 [LOAD_IMAGE] Loading image from: {image_path}")
+        return await self._load_image_at_level(image_path, level=1)
+    
+    async def _load_image_at_level(
+        self, 
+        image_path: str, 
+        level: int = 1
+    ) -> Tuple[np.ndarray, Optional[any]]:
+        """
+        加载指定 level 的图像（支持WSI格式）
+        
+        Args:
+            image_path: 图像路径
+            level: WSI pyramid level (0=最高分辨率)
+            
+        Returns:
+            (image_array, slide_object)
+        """
+        print(f"📂 [LOAD_IMAGE] Loading image from: {image_path} at level {level}")
         path = Path(image_path)
         
         print(f"🔍 [LOAD_IMAGE] File exists: {path.exists()}, suffix: {path.suffix}")
@@ -239,10 +375,28 @@ class InstanSegService:
                 import tiffslide
                 
                 slide = tiffslide.TiffSlide(str(path))
-                # 获取缩略图或指定级别
-                level = min(2, len(slide.level_dimensions) - 1)  # 使用中等分辨率
-                print(f"📊 [LOAD_IMAGE] TiffSlide loaded - level_count: {len(slide.level_dimensions)}, using level: {level}")
-                print(f"📏 [LOAD_IMAGE] Level dimensions: {slide.level_dimensions[level]}")
+                
+                # 使用指定的 level
+                level = min(level, len(slide.level_dimensions) - 1)
+                self.current_level = level
+                
+                print(f"📊 [LOAD_IMAGE] TiffSlide loaded - level_count: {len(slide.level_dimensions)}")
+                print(f"📏 [LOAD_IMAGE] All level dimensions: {slide.level_dimensions}")
+                print(f"🎯 [LOAD_IMAGE] Using level: {level}, dimensions: {slide.level_dimensions[level]}")
+                
+                # 从slide metadata中获取真实的pixel_size（μm/pixel）
+                try:
+                    # 尝试从metadata中读取MPP (Microns Per Pixel)
+                    mpp_x = float(slide.properties.get('tiffslide.mpp-x', 0.25))  # 默认0.25 μm/pixel (40x)
+                    downsample = slide.level_downsamples[level]
+                    self.pixel_size = mpp_x * downsample
+                    
+                    print(f"🔬 [LOAD_IMAGE] Metadata: mpp_x={mpp_x:.4f} μm/pixel, downsample={downsample:.2f}")
+                    print(f"✅ [LOAD_IMAGE] Computed pixel_size={self.pixel_size:.4f} μm/pixel for level {level}")
+                except Exception as e:
+                    print(f"⚠️ [LOAD_IMAGE] Could not read MPP from metadata: {e}")
+                    print(f"⚠️ [LOAD_IMAGE] Using default pixel_size=1.0 μm/pixel")
+                    self.pixel_size = 1.0
                 
                 # 读取指定level的图像
                 image = np.array(slide.read_region((0, 0), level, slide.level_dimensions[level]))
@@ -299,6 +453,92 @@ class InstanSegService:
         
         return tiles
     
+    def _should_process_tile_by_mask(
+        self, 
+        tile_coord: Tuple[int, int, int, int],
+        image_width: int,
+        image_height: int
+    ) -> bool:
+        """
+        基于 tissue mask 判断是否应该处理该 tile（第一层过滤）
+        
+        Args:
+            tile_coord: (x, y, w, h) 在分割 level 的坐标
+            image_width: 分割 level 的图像宽度
+            image_height: 分割 level 的图像高度
+            
+        Returns:
+            是否应该处理该 tile
+        """
+        if self.tissue_mask is None:
+            return True  # 如果没有 mask，处理所有 tile
+        
+        x, y, w, h = tile_coord
+        
+        # 计算从分割 level 到 mask level 的缩放比例
+        # level 0 -> level 1: downsample ~2x
+        # level 0 -> level 2: downsample ~4x
+        # level 1 -> level 2: downsample ~2x
+        downsample_factor = 2 ** (self.seg_level - self.mask_level)
+        
+        # 将 tile 坐标映射到 mask 坐标系
+        mask_h, mask_w = self.tissue_mask.shape
+        mask_x = int(x / downsample_factor)
+        mask_y = int(y / downsample_factor)
+        mask_w = int(w / downsample_factor)
+        mask_h_tile = int(h / downsample_factor)
+        
+        # 确保坐标在 mask 范围内
+        mask_x = max(0, min(mask_x, mask_w - 1))
+        mask_y = max(0, min(mask_y, mask_h - 1))
+        mask_x_end = min(mask_x + mask_w, mask_w)
+        mask_y_end = min(mask_y + mask_h_tile, mask_h)
+        
+        if mask_x_end <= mask_x or mask_y_end <= mask_y:
+            return False
+        
+        # 提取对应区域的 mask
+        tile_mask_region = self.tissue_mask[mask_y:mask_y_end, mask_x:mask_x_end]
+        
+        # 计算组织覆盖率
+        tissue_ratio = np.mean(tile_mask_region > 0)
+        
+        should_process = tissue_ratio >= settings.TISSUE_RATIO_THRESH
+        
+        if not should_process:
+            print(f"  ⏭️ [FILTER-MASK] Skipping tile at ({x},{y}) - "
+                  f"tissue_ratio={tissue_ratio:.3f} < {settings.TISSUE_RATIO_THRESH}")
+        
+        return should_process
+    
+    def _should_process_tile_by_density(self, tile_image: np.ndarray) -> bool:
+        """
+        基于前景密度判断是否应该处理该 tile（第二层过滤）
+        在 tile 层面做 cheap 的密度检查
+        
+        Args:
+            tile_image: RGB tile 图像
+            
+        Returns:
+            是否应该处理该 tile
+        """
+        # 转灰度
+        gray = cv2.cvtColor(tile_image, cv2.COLOR_RGB2GRAY)
+        
+        # Otsu 阈值
+        _, tile_mask = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+        
+        # 计算前景比例
+        fg_ratio = np.mean(tile_mask > 0)
+        
+        should_process = fg_ratio >= settings.FG_DENSITY_THRESH
+        
+        if not should_process:
+            print(f"    ⏭️ [FILTER-DENSITY] Low density tile - "
+                  f"fg_ratio={fg_ratio:.3f} < {settings.FG_DENSITY_THRESH}")
+        
+        return should_process
+    
     async def _segment_tile(
         self,
         tile_image: np.ndarray,
@@ -312,10 +552,9 @@ class InstanSegService:
             (masks, labels)
         """
         if not INSTANSEG_AVAILABLE or self.model is None:
-            # Mock implementation
-            print(f"⚠️ [SEGMENT] 使用Mock方法分割瓦片 ({offset_x}, {offset_y})")
-            await asyncio.sleep(0.1)  # 模拟处理时间
-            return self._mock_segment(tile_image, offset_x, offset_y)
+            error_msg = "InstanSeg not available or model not loaded"
+            logger.error(error_msg)
+            raise RuntimeError(error_msg)
         
         print(f"🔬 [SEGMENT] 使用真实InstanSeg分割瓦片 ({offset_x}, {offset_y})")
         try:
@@ -331,7 +570,7 @@ class InstanSegService:
         except Exception as e:
             logger.error(f"Error segmenting tile at ({offset_x}, {offset_y}): {e}")
             print(f"❌ [SEGMENT] 瓦片分割失败 ({offset_x}, {offset_y}): {e}")
-            return None, None
+            raise
     
     def _segment_tile_sync(
         self,
@@ -339,15 +578,17 @@ class InstanSegService:
         offset_x: int,
         offset_y: int
     ) -> Tuple[List, List]:
-        """同步分割瓦片 - 使用真实的InstanSeg"""
+        """同步分割瓦片 - 使用真实的InstanSeg（优化版）"""
         print(f"  🔬 [INSTANSEG_REAL] 开始分割瓦片，尺寸: {tile_image.shape}")
+        print(f"  📏 [INSTANSEG_REAL] 使用 pixel_size={self.pixel_size:.4f} μm/pixel")
         
-        # 使用InstanSeg的eval_small_image方法
-        # pixel_size参数对于HE染色图像可以设为1.0
-        labeled_output, image_tensor = self.model.eval_small_image(
-            tile_image, 
-            pixel_size=1.0
-        )
+        # 优化：使用 inference_mode 减少显存和计算开销
+        with torch.inference_mode():
+            # 使用从WSI metadata计算出的真实pixel_size
+            labeled_output, image_tensor = self.model.eval_small_image(
+                tile_image, 
+                pixel_size=self.pixel_size
+            )
         
         print(f"  ✅ [INSTANSEG_REAL] InstanSeg分割完成")
         print(f"  📊 [INSTANSEG_REAL] labeled_output type: {type(labeled_output)}, shape: {labeled_output.shape}")
@@ -372,6 +613,7 @@ class InstanSegService:
         unique_labels = np.unique(labeled_output)
         unique_labels = unique_labels[unique_labels > 0]
         
+        filtered_count = 0
         for label_id in unique_labels:
             # 创建当前标签的二值mask
             binary_mask = (labeled_output == label_id).astype(np.uint8)
@@ -387,6 +629,12 @@ class InstanSegService:
                 # 使用最大的轮廓
                 contour = max(contours, key=cv2.contourArea)
                 
+                # 优化：最小面积过滤（去除噪声）
+                area = cv2.contourArea(contour)
+                if area < settings.MIN_CELL_AREA:
+                    filtered_count += 1
+                    continue
+                
                 if len(contour) >= 3:  # 至少需要3个点形成多边形
                     # 简化轮廓
                     epsilon = 0.01 * cv2.arcLength(contour, True)
@@ -400,40 +648,11 @@ class InstanSegService:
                     masks.append(polygon)
                     labels.append(f"cell_{label_id}")
         
+        if filtered_count > 0:
+            print(f"  🧹 [OPTIMIZATION] Filtered {filtered_count} small objects "
+                  f"(area < {settings.MIN_CELL_AREA})")
+        
         print(f"  ✅ [INSTANSEG_REAL] 从labeled_output提取了 {len(masks)} 个细胞")
-        return masks, labels
-    
-    def _mock_segment(
-        self,
-        tile_image: np.ndarray,
-        offset_x: int,
-        offset_y: int
-    ) -> Tuple[List, List]:
-        """Mock分割（用于测试）"""
-        # 生成一些假的细胞mask
-        h, w = tile_image.shape[:2]
-        num_cells = np.random.randint(5, 20)
-        
-        masks = []
-        labels = []
-        
-        for i in range(num_cells):
-            # 随机生成圆形mask
-            cx = np.random.randint(50, w - 50) + offset_x
-            cy = np.random.randint(50, h - 50) + offset_y
-            radius = np.random.randint(10, 30)
-            
-            # 生成多边形近似
-            num_points = 20
-            angles = np.linspace(0, 2*np.pi, num_points)
-            polygon = np.array([
-                [cx + radius * np.cos(a), cy + radius * np.sin(a)]
-                for a in angles
-            ])
-            
-            masks.append(polygon)
-            labels.append(f"cell_{i}")
-        
         return masks, labels
     
     async def _merge_results(
