@@ -2,8 +2,6 @@
 
 A high-performance workflow scheduling system designed for large-scale image processing, particularly for whole slide images (WSI) in pathology.
 
-[中文文档](README_CN.md)
-
 ---
 
 ## ⚠️ Important Note on Resolution Settings
@@ -64,8 +62,6 @@ The current implementation can be easily configured to use level 0 by modifying 
 - ✅ Noise filtering with minimum cell area threshold
 - ✅ Optimal tile size balancing speed and accuracy
 - ✅ Parallel processing of independent branches
-
-📖 **[详细优化指南](OPTIMIZATION_GUIDE.md)** | **[性能测试结果](OPTIMIZATION_SUMMARY.md)**
 
 ### 4. Real-Time Progress Tracking
 - WebSocket real-time updates
@@ -409,8 +405,6 @@ Our **two-stage processing pipeline with batch merging** significantly reduces c
    - Optimal tile size (512×512) balancing speed and accuracy
 
 **Impact**: With these optimizations, each worker can handle **3-5x more WSI** per hour, making the system highly efficient even with limited hardware resources.
-
-📖 See [OPTIMIZATION_GUIDE.md](OPTIMIZATION_GUIDE.md) for detailed technical explanation.
 
 #### 2. Horizontal Scaling
 

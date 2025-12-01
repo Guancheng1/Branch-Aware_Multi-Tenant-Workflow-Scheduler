@@ -1,5 +1,5 @@
 """
-工作流管理器 - 管理DAG工作流
+Workflow manager - Manages DAG workflows
 """
 import asyncio
 from typing import Dict, List, Set, Optional
@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 
 class WorkflowManager:
-    """工作流管理器"""
+    """Workflow manager"""
     
     def __init__(self):
         self.workflows: Dict[str, Workflow] = {}
@@ -28,10 +28,10 @@ class WorkflowManager:
     
     async def create_workflow(self, workflow: Workflow) -> str:
         """
-        创建并启动工作流
+        Create and start workflow
         
         Args:
-            workflow: 工作流对象
+            workflow: Workflow object
             
         Returns:
             workflow_id
@@ -41,42 +41,42 @@ class WorkflowManager:
         
         logger.info(f"Creating workflow {workflow_id} with {len(workflow.nodes)} nodes")
         
-        # 验证DAG
+        # Validate DAG
         if not self._validate_dag(workflow.nodes):
             raise ValueError("Invalid DAG: contains cycles or invalid dependencies")
         
-        # 启动工作流执行
+        # Start workflow execution
         asyncio.create_task(self._execute_workflow(workflow))
         
         return workflow_id
     
     def _validate_dag(self, nodes: List[WorkflowNode]) -> bool:
         """
-        验证DAG的有效性（无环图）
+        Validate DAG validity (acyclic graph)
         
         Args:
-            nodes: 节点列表
+            nodes: Node list
             
         Returns:
-            是否有效
+            Whether it's valid
         """
-        # 构建邻接表
+        # Build adjacency list
         node_ids = {node.node_id for node in nodes}
         graph = {node.node_id: node.depends_on for node in nodes}
         
-        # 检查所有依赖是否存在（只检查workflow内部的依赖）
+        # Check if all dependencies exist (only check workflow internal dependencies)
         for node in nodes:
             for dep in node.depends_on:
-                # 如果依赖以 "job_" 开头，说明是外部job引用，跳过检查
+                # If dependency starts with "job_", it's an external job reference, skip check
                 if dep.startswith("job_"):
                     continue
-                # 否则应该是workflow内部的node_id
+                # Otherwise it should be a workflow internal node_id
                 if dep not in node_ids:
                     logger.error(f"Node {node.node_id} depends on non-existent node {dep}")
                     return False
         
-        # 检查是否有环（只在workflow内部的依赖中检查）
-        # 只构建内部节点之间的依赖关系
+        # Check for cycles (only check workflow internal dependencies)
+        # Only build dependency relationships between internal nodes
         internal_graph = {}
         for node in nodes:
             internal_deps = [dep for dep in node.depends_on if dep in node_ids]
@@ -109,68 +109,68 @@ class WorkflowManager:
     
     async def _execute_workflow(self, workflow: Workflow):
         """
-        执行工作流
+        Execute workflow
         
         Args:
-            workflow: 工作流对象
+            workflow: Workflow object
         """
         workflow.status = WorkflowStatus.RUNNING
         workflow.started_at = datetime.now()
         
         try:
-            # 构建依赖图
+            # Build dependency graph
             node_map = {node.node_id: node for node in workflow.nodes}
             completed_nodes: Set[str] = set()
             failed_nodes: Set[str] = set()
             running_nodes: Set[str] = set()
             
-            # 持续执行直到所有节点完成或失败
+            # Continue execution until all nodes are completed or failed
             while len(completed_nodes) + len(failed_nodes) < len(workflow.nodes):
-                # 找到可以执行的节点（依赖已完成）
+                # Find nodes that can be executed (dependencies completed)
                 ready_nodes = []
                 for node in workflow.nodes:
                     if (node.node_id not in completed_nodes 
                         and node.node_id not in failed_nodes
                         and node.node_id not in running_nodes):
-                        # 检查依赖
+                        # Check dependencies
                         deps_satisfied = True
                         for dep in node.depends_on:
                             if dep in node_map:
-                                # 依赖是workflow内的node
+                                # Dependency is a workflow internal node
                                 if dep not in completed_nodes:
                                     deps_satisfied = False
                                     break
                             else:
-                                # 依赖是外部已存在的job（格式：job_xxx）
-                                # 从node_id提取job_id
+                                # Dependency is an external existing job (format: job_xxx)
+                                # Extract job_id from node_id
                                 if dep.startswith("job_"):
-                                    dep_job_id = dep[4:]  # 去掉 "job_" 前缀
+                                    dep_job_id = dep[4:]  # Remove "job_" prefix
                                     dep_job = scheduler.get_job(dep_job_id)
                                     if not dep_job or dep_job.status != JobStatus.SUCCEEDED:
                                         deps_satisfied = False
                                         break
                                 else:
-                                    # 未知的依赖格式，视为未满足
+                                    # Unknown dependency format, consider unsatisfied
                                     deps_satisfied = False
                                     break
                         
                         if deps_satisfied:
                             ready_nodes.append(node)
                 
-                # 提交准备好的节点
+                # Submit ready nodes
                 for node in ready_nodes:
                     running_nodes.add(node.node_id)
                     asyncio.create_task(
                         self._execute_node(workflow, node, completed_nodes, failed_nodes, running_nodes)
                     )
                 
-                # 更新进度
+                # Update progress
                 self._update_workflow_progress(workflow)
                 
-                # 等待一段时间再检查
+                # Wait for a while before checking again
                 await asyncio.sleep(0.5)
             
-            # 检查最终状态
+            # Check final status
             if failed_nodes:
                 workflow.status = WorkflowStatus.FAILED
                 logger.error(f"Workflow {workflow.workflow_id} failed with {len(failed_nodes)} failed nodes")
@@ -195,20 +195,20 @@ class WorkflowManager:
         running_nodes: Set[str]
     ):
         """
-        执行单个节点
+        Execute single node
         
         Args:
-            workflow: 工作流对象
-            node: 节点对象
-            completed_nodes: 已完成节点集合
-            failed_nodes: 失败节点集合
-            running_nodes: 运行中节点集合
+            workflow: Workflow object
+            node: Node object
+            completed_nodes: Set of completed nodes
+            failed_nodes: Set of failed nodes
+            running_nodes: Set of running nodes
         """
         try:
             print(f"🌳 [WORKFLOW] Executing node {node.node_id} in workflow {workflow.workflow_id}")
             logger.info(f"Executing node {node.node_id} in workflow {workflow.workflow_id}")
             
-            # 创建任务
+            # Create job
             job = Job(
                 user_id=workflow.user_id,
                 workflow_id=workflow.workflow_id,
@@ -221,7 +221,7 @@ class WorkflowManager:
             print(f"📝 [WORKFLOW] Created job {job.job_id} for node {node.node_id}")
             print(f"📝 [WORKFLOW] Job details - type: {node.job_type}, branch: {node.branch}, image: {node.image_path}")
             
-            # 提交到调度器
+            # Submit to scheduler
             job_id = await scheduler.submit_job(job)
             self.workflow_jobs[workflow.workflow_id].append(job_id)
             workflow.job_ids.append(job_id)
@@ -229,7 +229,7 @@ class WorkflowManager:
             
             print(f"📤 [WORKFLOW] Job {job_id} submitted to scheduler")
             
-            # 等待任务完成
+            # Wait for job completion
             iteration = 0
             while True:
                 job = scheduler.get_job(job_id)
@@ -237,19 +237,19 @@ class WorkflowManager:
                     print(f"⚠️ [WORKFLOW] Job {job_id} not found in scheduler")
                     break
                 
-                if iteration % 10 == 0:  # 每5秒打印一次
+                if iteration % 10 == 0:  # Print every 5 seconds
                     print(f"⏳ [WORKFLOW] Waiting for job {job_id}, status: {job.status}, progress: {job.progress_percent:.1f}%")
                 
                 if job.status in [JobStatus.SUCCEEDED, JobStatus.FAILED, JobStatus.CANCELLED]:
                     print(f"🏁 [WORKFLOW] Job {job_id} finished with status: {job.status}")
                     break
                 
-                # 注意：调度器现在会自动执行任务，不需要在这里手动调用executor
+                # Note: Scheduler now automatically executes jobs, no need to manually call executor here
                 
                 await asyncio.sleep(0.5)
                 iteration += 1
             
-            # 检查最终状态
+            # Check final status
             if job and job.status == JobStatus.SUCCEEDED:
                 completed_nodes.add(node.node_id)
                 print(f"✅ [WORKFLOW] Node {node.node_id} completed successfully")
@@ -269,12 +269,12 @@ class WorkflowManager:
             print(f"🧹 [WORKFLOW] Node {node.node_id} cleaned up")
     
     def _update_workflow_progress(self, workflow: Workflow):
-        """更新工作流进度"""
+        """Update workflow progress"""
         if not workflow.job_ids:
             workflow.progress_percent = 0.0
             return
         
-        # 计算所有任务的平均进度
+        # Calculate average progress of all jobs
         total_progress = 0.0
         for job_id in workflow.job_ids:
             job = scheduler.get_job(job_id)
@@ -287,16 +287,16 @@ class WorkflowManager:
         workflow.progress_percent = total_progress / len(workflow.job_ids)
     
     def get_workflow(self, workflow_id: str) -> Optional[Workflow]:
-        """获取工作流"""
+        """Get workflow"""
         return self.workflows.get(workflow_id)
     
     def get_workflow_progress(self, workflow_id: str) -> Optional[WorkflowProgress]:
-        """获取工作流进度"""
+        """Get workflow progress"""
         workflow = self.workflows.get(workflow_id)
         if not workflow:
             return None
         
-        # 获取所有任务的进度
+        # Get progress of all jobs
         jobs = []
         for job_id in workflow.job_ids:
             job = scheduler.get_job(job_id)
@@ -324,7 +324,7 @@ class WorkflowManager:
         )
     
     def get_user_workflows(self, user_id: str) -> List[Workflow]:
-        """获取用户的所有工作流"""
+        """Get all user workflows"""
         return [
             wf for wf in self.workflows.values()
             if wf.user_id == user_id
@@ -332,14 +332,14 @@ class WorkflowManager:
     
     async def cancel_workflow(self, workflow_id: str, user_id: str) -> bool:
         """
-        取消工作流
+        Cancel workflow
         
         Args:
-            workflow_id: 工作流ID
-            user_id: 用户ID
+            workflow_id: Workflow ID
+            user_id: User ID
             
         Returns:
-            是否成功取消
+            Whether cancellation was successful
         """
         workflow = self.workflows.get(workflow_id)
         if not workflow:
@@ -352,7 +352,7 @@ class WorkflowManager:
         if workflow.status not in [WorkflowStatus.PENDING, WorkflowStatus.RUNNING]:
             return False
         
-        # 取消所有相关任务
+        # Cancel all related jobs
         cancelled_count = 0
         for job_id in workflow.job_ids:
             if await scheduler.cancel_job(job_id, user_id):
@@ -366,6 +366,6 @@ class WorkflowManager:
         return True
 
 
-# 全局工作流管理器实例
+# Global workflow manager instance
 workflow_manager = WorkflowManager()
 

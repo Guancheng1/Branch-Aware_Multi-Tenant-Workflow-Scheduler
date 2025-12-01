@@ -1,48 +1,48 @@
 #!/bin/bash
 
-# 本地启动脚本（不使用Docker）
+# Local startup script (without Docker)
 
 echo "======================================"
 echo "Branch-Aware Multi-Tenant Workflow Scheduler"
-echo "本地启动模式"
+echo "Local Startup Mode"
 echo "======================================"
 echo ""
 
-# 设置OpenSlide库路径（macOS）
+# Set OpenSlide library path (macOS)
 export DYLD_LIBRARY_PATH=/opt/homebrew/lib:$DYLD_LIBRARY_PATH
 
-# 创建必要的目录
-echo "创建必要的目录..."
+# Create necessary directories
+echo "Creating necessary directories..."
 mkdir -p uploads results logs
-echo "✅ 目录创建完成"
+echo "✅ Directories created"
 echo ""
 
-# 检查Python依赖
-echo "检查依赖..."
+# Check Python dependencies
+echo "Checking dependencies..."
 python -c "import fastapi" 2>/dev/null
 if [ $? -ne 0 ]; then
-    echo "⚠️ 缺少依赖，正在安装..."
+    echo "⚠️ Missing dependencies, installing..."
     python -m pip install --user -q fastapi uvicorn pydantic pydantic-settings opencv-python numpy pillow openslide-python
-    echo "✅ 依赖安装完成"
+    echo "✅ Dependencies installed"
 else
-    echo "✅ 依赖已安装"
+    echo "✅ Dependencies already installed"
 fi
 echo ""
 
-# 启动服务
-echo "启动服务..."
+# Start services
+echo "Starting services..."
 echo ""
 echo "======================================"
-echo "服务启动中..."
+echo "Services starting..."
 echo "======================================"
 echo ""
-echo "访问地址："
-echo "  - Web界面:    http://localhost:8000"
-echo "  - API文档:    http://localhost:8000/docs"
+echo "Access URLs:"
+echo "  - Web UI:     http://localhost:8000"
+echo "  - API Docs:   http://localhost:8000/docs"
 echo ""
-echo "按 Ctrl+C 停止服务"
+echo "Press Ctrl+C to stop service"
 echo ""
 
-# 运行应用
+# Run application
 python main.py
 

@@ -1,11 +1,11 @@
 #!/bin/bash
 
-# 快速重启Docker容器脚本（开发模式）
-echo "🔄 重启Docker容器..."
+# Quick Docker container restart script (development mode)
+echo "🔄 Restarting Docker containers..."
 
-# 重启app容器
+# Restart app container
 docker-compose restart app
 
-echo "✅ 容器已重启！"
-echo "📊 查看日志: docker-compose logs -f app"
+echo "✅ Containers restarted!"
+echo "📊 View logs: docker-compose logs -f app"
 

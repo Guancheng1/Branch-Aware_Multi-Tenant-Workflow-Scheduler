@@ -1,5 +1,5 @@
 """
-任务执行器 - 负责执行具体的图像处理任务
+Job executor - responsible for executing specific image processing tasks
 """
 import asyncio
 from pathlib import Path
@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 
 class JobExecutor:
-    """任务执行器"""
+    """Job executor"""
     
     def __init__(self):
         self.running_jobs = {}
@@ -27,14 +27,14 @@ class JobExecutor:
         progress_callback: Optional[Callable] = None
     ) -> Job:
         """
-        执行任务
+        Execute job
         
         Args:
-            job: 任务对象
-            progress_callback: 进度回调函数
+            job: Job object
+            progress_callback: Progress callback function
             
         Returns:
-            更新后的任务对象
+            Updated job object
         """
         print(f"🎯 [EXECUTOR] Starting execution of job {job.job_id}, type: {job.job_type}")
         self.running_jobs[job.job_id] = job
@@ -47,7 +47,7 @@ class JobExecutor:
             print(f"📝 [EXECUTOR] Job {job.job_id} - Image path: {job.image_path}")
             logger.info(f"Executing job {job.job_id} of type {job.job_type}")
             
-            # 根据任务类型执行
+            # Execute based on job type
             if job.job_type == JobType.CELL_SEGMENTATION:
                 print(f"🔬 [EXECUTOR] Job {job.job_id} - Executing cell segmentation")
                 result = await self._execute_cell_segmentation(job, progress_callback)
@@ -57,7 +57,7 @@ class JobExecutor:
             else:
                 raise ValueError(f"Unknown job type: {job.job_type}")
             
-            # 更新任务状态
+            # Update job status
             job.status = JobStatus.SUCCEEDED
             job.completed_at = datetime.now()
             job.progress_percent = 100.0
@@ -88,28 +88,28 @@ class JobExecutor:
         progress_callback: Optional[Callable]
     ) -> dict:
         """
-        执行细胞分割任务
+        Execute cell segmentation task
         
         Args:
-            job: 任务对象
-            progress_callback: 进度回调
+            job: Job object
+            progress_callback: Progress callback
             
         Returns:
-            结果字典
+            Result dictionary
         """
         print(f"🔬 [CELL_SEG] Job {job.job_id} - Starting cell segmentation")
         
-        # 创建输出目录
+        # Create output directory
         output_dir = Path(settings.RESULTS_DIR) / job.user_id / job.job_id
         output_dir.mkdir(parents=True, exist_ok=True)
         print(f"📁 [CELL_SEG] Job {job.job_id} - Output dir: {output_dir}")
         
-        # 获取参数
+        # Get parameters
         tile_size = job.parameters.get("tile_size", settings.TILE_SIZE)
         overlap = job.parameters.get("overlap", settings.TILE_OVERLAP)
         print(f"⚙️ [CELL_SEG] Job {job.job_id} - tile_size={tile_size}, overlap={overlap}")
         
-        # 创建进度回调包装
+        # Create progress callback wrapper
         async def wrapped_progress(processed, total, message):
             job.tiles_processed = processed
             job.tiles_total = total
@@ -121,7 +121,7 @@ class JobExecutor:
                 await progress_callback(job)
         
         print(f"🚀 [CELL_SEG] Job {job.job_id} - Calling instanseg_service.segment_large_image")
-        # 执行分割
+        # Execute segmentation
         result = await instanseg_service.segment_large_image(
             image_path=job.image_path,
             output_dir=str(output_dir),
@@ -139,20 +139,20 @@ class JobExecutor:
         progress_callback: Optional[Callable]
     ) -> dict:
         """
-        执行组织掩码生成任务
+        Execute tissue mask generation task
         
         Args:
-            job: 任务对象
-            progress_callback: 进度回调
+            job: Job object
+            progress_callback: Progress callback
             
         Returns:
-            结果字典
+            Result dictionary
         """
-        # 创建输出目录
+        # Create output directory
         output_dir = Path(settings.RESULTS_DIR) / job.user_id / job.job_id
         output_dir.mkdir(parents=True, exist_ok=True)
         
-        # 创建进度回调包装
+        # Create progress callback wrapper
         async def wrapped_progress(processed, total, message):
             job.tiles_processed = processed
             job.tiles_total = total
@@ -162,7 +162,7 @@ class JobExecutor:
             if progress_callback:
                 await progress_callback(job)
         
-        # 生成组织掩码
+        # Generate tissue mask
         result = await instanseg_service.generate_tissue_mask(
             image_path=job.image_path,
             output_dir=str(output_dir),
@@ -172,14 +172,14 @@ class JobExecutor:
         return result
     
     def get_running_job(self, job_id: str) -> Optional[Job]:
-        """获取运行中的任务"""
+        """Get running job"""
         return self.running_jobs.get(job_id)
     
     def get_all_running_jobs(self):
-        """获取所有运行中的任务"""
+        """Get all running jobs"""
         return list(self.running_jobs.values())
 
 
-# 全局执行器实例
+# Global executor instance
 job_executor = JobExecutor()
 

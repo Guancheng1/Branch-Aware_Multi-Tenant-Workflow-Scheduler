@@ -1,30 +1,30 @@
 #!/bin/bash
 
-# 应用开发模式配置（首次运行或修改docker-compose.yml后使用）
-echo "🔧 应用开发模式配置..."
+# Apply development mode configuration (use after first run or modifying docker-compose.yml)
+echo "🔧 Applying development mode configuration..."
 echo ""
 
-echo "1️⃣ 停止现有容器..."
+echo "1️⃣ Stopping existing containers..."
 docker-compose down
 
 echo ""
-echo "2️⃣ 用新配置启动（源代码挂载 + 自动重载）..."
+echo "2️⃣ Starting with new configuration (source code mount + auto-reload)..."
 docker-compose up -d
 
 echo ""
-echo "3️⃣ 等待容器启动..."
+echo "3️⃣ Waiting for containers to start..."
 sleep 3
 
 echo ""
-echo "✅ 开发模式已启用！"
+echo "✅ Development mode enabled!"
 echo ""
-echo "📋 特性："
-echo "  • 源代码已挂载（backend/, main.py）"
-echo "  • 自动重载已启用（修改代码会自动重启）"
-echo "  • 无需重新build镜像"
+echo "📋 Features:"
+echo "  • Source code mounted (backend/, main.py)"
+echo "  • Auto-reload enabled (code changes trigger automatic restart)"
+echo "  • No need to rebuild image"
 echo ""
-echo "📊 查看日志: docker-compose logs -f app"
-echo "🔄 手动重启: ./restart_docker.sh"
-echo "⏹️  停止服务: docker-compose down"
+echo "📊 View logs: docker-compose logs -f app"
+echo "🔄 Manual restart: ./restart_docker.sh"
+echo "⏹️  Stop service: docker-compose down"
 echo ""
 

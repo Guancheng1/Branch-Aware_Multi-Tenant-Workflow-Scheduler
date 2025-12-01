@@ -157,7 +157,7 @@ async function loadAvailableJobsForDependency() {
         
         const jobs = await response.json();
         
-        // Filter jobs that are completed or running (可以作为依赖)
+        // Filter jobs that are completed or running (can be used as dependencies)
         const availableJobs = jobs.filter(job => 
             job.status === 'SUCCEEDED' || job.status === 'RUNNING' || job.status === 'PENDING'
         );

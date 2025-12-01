@@ -1,47 +1,47 @@
 #!/bin/bash
-# 更新Docker并测试结果文件访问
+# Update Docker and test results file access
 
-echo "🐳 更新Docker容器并测试结果文件访问"
+echo "🐳 Updating Docker container and testing results file access"
 echo "=========================================="
 
-# 进入项目目录
+# Navigate to project directory
 cd "$(dirname "$0")"
 
 echo ""
-echo "步骤 1/3: 重新构建Docker镜像（应用最新代码）..."
+echo "Step 1/3: Rebuilding Docker image (applying latest code)..."
 echo "--------------------------------------------"
 docker-compose build app
 
 if [ $? -ne 0 ]; then
-    echo "❌ Docker构建失败!"
+    echo "❌ Docker build failed!"
     exit 1
 fi
 
 echo ""
-echo "步骤 2/3: 重启应用容器..."
+echo "Step 2/3: Restarting application container..."
 echo "--------------------------------------------"
 docker-compose restart app
 
-# 等待服务启动
-echo "⏳ 等待服务启动..."
+# Wait for service to start
+echo "⏳ Waiting for service to start..."
 sleep 5
 
-# 检查服务状态
+# Check service status
 echo ""
-echo "📊 容器状态:"
+echo "📊 Container status:"
 docker-compose ps
 
 echo ""
-echo "步骤 3/3: 运行测试脚本..."
+echo "Step 3/3: Running test script..."
 echo "--------------------------------------------"
 python3 test_docker_results.py
 
 echo ""
 echo "=========================================="
-echo "✅ 完成!"
+echo "✅ Complete!"
 echo ""
-echo "💡 如果测试成功，现在可以在浏览器中测试:"
-echo "   1. 打开: http://localhost:8000"
-echo "   2. 点击已完成的任务"
-echo "   3. 点击「查看结果」按钮"
+echo "💡 If tests passed, you can now test in browser:"
+echo "   1. Open: http://localhost:8000"
+echo "   2. Click on a completed task"
+echo "   3. Click the 'View Results' button"
 

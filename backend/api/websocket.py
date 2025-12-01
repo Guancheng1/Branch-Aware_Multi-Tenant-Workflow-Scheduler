@@ -1,5 +1,5 @@
 """
-WebSocket支持 - 实时进度更新
+WebSocket support - Real-time progress updates
 """
 from fastapi import WebSocket, WebSocketDisconnect
 from typing import Dict, Set
@@ -14,23 +14,23 @@ logger = logging.getLogger(__name__)
 
 
 class ConnectionManager:
-    """WebSocket连接管理器"""
+    """WebSocket connection manager"""
     
     def __init__(self):
-        # 存储活跃连接：user_id -> set of websockets
+        # Store active connections: user_id -> set of websockets
         self.active_connections: Dict[str, Set[WebSocket]] = {}
         
-        # 任务订阅：job_id -> set of websockets
+        # Job subscriptions: job_id -> set of websockets
         self.job_subscriptions: Dict[str, Set[WebSocket]] = {}
         
-        # 工作流订阅：workflow_id -> set of websockets
+        # Workflow subscriptions: workflow_id -> set of websockets
         self.workflow_subscriptions: Dict[str, Set[WebSocket]] = {}
         
-        # 广播任务
+        # Broadcast task
         self.broadcast_task = None
     
     async def connect(self, websocket: WebSocket, user_id: str):
-        """接受新连接"""
+        """Accept new connection"""
         await websocket.accept()
         
         if user_id not in self.active_connections:
@@ -41,14 +41,14 @@ class ConnectionManager:
         logger.info(f"WebSocket connected for user {user_id}")
     
     def disconnect(self, websocket: WebSocket, user_id: str):
-        """断开连接"""
+        """Disconnect"""
         if user_id in self.active_connections:
             self.active_connections[user_id].discard(websocket)
             
             if not self.active_connections[user_id]:
                 del self.active_connections[user_id]
         
-        # 清理订阅
+        # Clean up subscriptions
         for job_id, sockets in list(self.job_subscriptions.items()):
             sockets.discard(websocket)
             if not sockets:
@@ -62,28 +62,28 @@ class ConnectionManager:
         logger.info(f"WebSocket disconnected for user {user_id}")
     
     def subscribe_job(self, websocket: WebSocket, job_id: str):
-        """订阅任务更新"""
+        """Subscribe to job updates"""
         if job_id not in self.job_subscriptions:
             self.job_subscriptions[job_id] = set()
         
         self.job_subscriptions[job_id].add(websocket)
     
     def subscribe_workflow(self, websocket: WebSocket, workflow_id: str):
-        """订阅工作流更新"""
+        """Subscribe to workflow updates"""
         if workflow_id not in self.workflow_subscriptions:
             self.workflow_subscriptions[workflow_id] = set()
         
         self.workflow_subscriptions[workflow_id].add(websocket)
     
     async def send_personal_message(self, message: str, websocket: WebSocket):
-        """发送个人消息"""
+        """Send personal message"""
         try:
             await websocket.send_text(message)
         except Exception as e:
             logger.error(f"Error sending message: {e}")
     
     async def broadcast_to_user(self, message: str, user_id: str):
-        """向用户的所有连接广播"""
+        """Broadcast to all user connections"""
         if user_id not in self.active_connections:
             return
         
@@ -95,12 +95,12 @@ class ConnectionManager:
                 logger.error(f"Error broadcasting to user {user_id}: {e}")
                 dead_sockets.add(websocket)
         
-        # 清理死连接
+        # Clean up dead connections
         for socket in dead_sockets:
             self.disconnect(socket, user_id)
     
     async def broadcast_job_update(self, job_id: str):
-        """广播任务更新"""
+        """Broadcast job update"""
         if job_id not in self.job_subscriptions:
             return
         
@@ -127,12 +127,12 @@ class ConnectionManager:
                 logger.error(f"Error broadcasting job update: {e}")
                 dead_sockets.add(websocket)
         
-        # 清理死连接
+        # Clean up dead connections
         for socket in dead_sockets:
             self.job_subscriptions[job_id].discard(socket)
     
     async def broadcast_workflow_update(self, workflow_id: str):
-        """广播工作流更新"""
+        """Broadcast workflow update"""
         if workflow_id not in self.workflow_subscriptions:
             return
         
@@ -164,17 +164,17 @@ class ConnectionManager:
                 logger.error(f"Error broadcasting workflow update: {e}")
                 dead_sockets.add(websocket)
         
-        # 清理死连接
+        # Clean up dead connections
         for socket in dead_sockets:
             self.workflow_subscriptions[workflow_id].discard(socket)
     
     async def start_broadcasting(self):
-        """启动定期广播任务"""
+        """Start periodic broadcast task"""
         if self.broadcast_task is None:
             self.broadcast_task = asyncio.create_task(self._broadcast_loop())
     
     async def stop_broadcasting(self):
-        """停止广播任务"""
+        """Stop broadcast task"""
         if self.broadcast_task:
             self.broadcast_task.cancel()
             try:
@@ -183,18 +183,18 @@ class ConnectionManager:
                 pass
     
     async def _broadcast_loop(self):
-        """定期广播更新"""
+        """Periodic broadcast updates"""
         while True:
             try:
-                # 广播所有订阅的任务更新
+                # Broadcast all subscribed job updates
                 for job_id in list(self.job_subscriptions.keys()):
                     await self.broadcast_job_update(job_id)
                 
-                # 广播所有订阅的工作流更新
+                # Broadcast all subscribed workflow updates
                 for workflow_id in list(self.workflow_subscriptions.keys()):
                     await self.broadcast_workflow_update(workflow_id)
                 
-                await asyncio.sleep(1)  # 每秒更新一次
+                await asyncio.sleep(1)  # Update every second
             
             except asyncio.CancelledError:
                 break
@@ -203,15 +203,15 @@ class ConnectionManager:
                 await asyncio.sleep(1)
 
 
-# 全局连接管理器
+# Global connection manager
 manager = ConnectionManager()
 
 
 async def websocket_endpoint(websocket: WebSocket, user_id: str):
     """
-    WebSocket端点
+    WebSocket endpoint
     
-    客户端可以发送消息订阅特定的任务或工作流：
+    Clients can send messages to subscribe to specific jobs or workflows:
     {"action": "subscribe_job", "job_id": "xxx"}
     {"action": "subscribe_workflow", "workflow_id": "xxx"}
     """
@@ -219,7 +219,7 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
     
     try:
         while True:
-            # 接收客户端消息
+            # Receive client messages
             data = await websocket.receive_text()
             
             try:
@@ -229,7 +229,7 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
                 if action == "subscribe_job":
                     job_id = message.get("job_id")
                     if job_id:
-                        # 验证权限
+                        # Verify permissions
                         job = scheduler.get_job(job_id)
                         if job and job.user_id == user_id:
                             manager.subscribe_job(websocket, job_id)
@@ -237,13 +237,13 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
                                 json.dumps({"status": "subscribed", "job_id": job_id}),
                                 websocket
                             )
-                            # 立即发送当前状态
+                            # Send current status immediately
                             await manager.broadcast_job_update(job_id)
                 
                 elif action == "subscribe_workflow":
                     workflow_id = message.get("workflow_id")
                     if workflow_id:
-                        # 验证权限
+                        # Verify permissions
                         workflow = workflow_manager.get_workflow(workflow_id)
                         if workflow and workflow.user_id == user_id:
                             manager.subscribe_workflow(websocket, workflow_id)
@@ -251,7 +251,7 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
                                 json.dumps({"status": "subscribed", "workflow_id": workflow_id}),
                                 websocket
                             )
-                            # 立即发送当前状态
+                            # Send current status immediately
                             await manager.broadcast_workflow_update(workflow_id)
                 
                 elif action == "ping":

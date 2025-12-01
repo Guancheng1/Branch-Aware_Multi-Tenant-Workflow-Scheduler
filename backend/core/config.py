@@ -1,5 +1,5 @@
 """
-配置管理
+Configuration management
 """
 import os
 from pathlib import Path
@@ -7,39 +7,39 @@ from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    """应用配置"""
+    """Application configuration"""
     
-    # 服务器配置
+    # Server configuration
     HOST: str = "0.0.0.0"
     PORT: int = 8000
     
-    # Worker配置
-    MAX_WORKERS: int = 5  # 全局worker池大小，控制并发任务数
-    MAX_ACTIVE_USERS: int = 3  # 最多3个用户同时有运行中的任务
+    # Worker configuration
+    MAX_WORKERS: int = 5  # Global worker pool size, controls concurrent tasks
+    MAX_ACTIVE_USERS: int = 3  # Maximum 3 users with running tasks simultaneously
     
-    # Redis配置
+    # Redis configuration
     REDIS_HOST: str = "localhost"
     REDIS_PORT: int = 6379
     REDIS_DB: int = 0
     
-    # 存储配置
+    # Storage configuration
     UPLOAD_DIR: Path = Path("./uploads")
     RESULTS_DIR: Path = Path("./results")
     
-    # InstanSeg配置
+    # InstanSeg configuration
     INSTANSEG_MODEL: str = "fluorescence_nuclei_1"
-    TILE_SIZE: int = 512  # 优化：512×512 平衡速度与精度
-    TILE_OVERLAP: int = 64  # 优化：减少重叠区域
-    BATCH_SIZE: int = 8  # 批处理大小：一次处理多个瓦片，充分利用GPU并行能力
+    TILE_SIZE: int = 512  # Optimization: 512×512 balances speed and accuracy
+    TILE_OVERLAP: int = 64  # Optimization: reduce overlap area
+    BATCH_SIZE: int = 8  # Batch processing size: process multiple tiles at once, fully utilize GPU parallelism
     
-    # 两阶段分割配置
-    TISSUE_MASK_LEVEL: int = 2  # Stage 1: 低分辨率生成 mask
-    CELL_SEG_LEVEL: int = 1     # Stage 2: 高分辨率细胞分割
-    TISSUE_RATIO_THRESH: float = 0.05  # tile 最小组织覆盖率（降低以过滤更多）
-    FG_DENSITY_THRESH: float = 0.10   # tile 内部最小前景密度（提高以过滤稀疏区域）
-    MIN_CELL_AREA: float = 20.0       # 最小细胞面积（过滤噪声）
+    # Two-stage segmentation configuration
+    TISSUE_MASK_LEVEL: int = 2  # Stage 1: Low resolution mask generation
+    CELL_SEG_LEVEL: int = 1     # Stage 2: High resolution cell segmentation
+    TISSUE_RATIO_THRESH: float = 0.05  # Minimum tissue coverage ratio for tiles (lower to filter more)
+    FG_DENSITY_THRESH: float = 0.10   # Minimum foreground density within tiles (increase to filter sparse regions)
+    MIN_CELL_AREA: float = 20.0       # Minimum cell area (filter noise)
     
-    # 设备配置
+    # Device configuration
     DEVICE: str = "cuda"  # cuda or cpu
     
     class Config:
@@ -48,12 +48,12 @@ class Settings(BaseSettings):
     
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        # 创建必要的目录
+        # Create necessary directories
         self.UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
         self.RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
 
-# 全局配置实例
+# Global configuration instance
 settings = Settings()
 
 

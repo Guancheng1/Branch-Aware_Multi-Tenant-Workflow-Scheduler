@@ -1,5 +1,5 @@
 services:
-  # Redis - 用于队列和缓存
+  # Redis - for queue and cache
   redis:
     image: redis:7-alpine
     container_name: workflow-redis
@@ -15,7 +15,7 @@ services:
       timeout: 5s
       retries: 5
 
-  # FastAPI 应用
+  # FastAPI application
   app:
     build: .
     container_name: workflow-app
@@ -29,15 +29,15 @@ services:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - REDIS_DB=0
-      - DEVICE=cpu  # 如果有GPU，改为cuda
-      - PYTHONUNBUFFERED=1  # 确保print立即输出到日志
+      - DEVICE=cpu  # If GPU available, change to cuda
+      - PYTHONUNBUFFERED=1  # Ensure print outputs immediately to logs
     volumes:
-      # 数据目录
+      # Data directories
       - ./uploads:/app/uploads
       - ./results:/app/results
       - ./logs:/app/logs
       - ./static:/app/static
-      # 源代码挂载（开发模式 - 修改代码无需重新build）
+      # Source code mount (development mode - no need to rebuild after code changes)
       - ./backend:/app/backend
       - ./main.py:/app/main.py
       - ./requirements.txt:/app/requirements.txt
@@ -47,10 +47,10 @@ services:
       redis:
         condition: service_healthy
     restart: unless-stopped
-    # 开发模式：代码变更后自动重启（可选）
+    # Development mode: automatically restart after code changes (optional)
     command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 
-  # Prometheus - 监控
+  # Prometheus - monitoring
   prometheus:
     image: prom/prometheus:latest
     container_name: workflow-prometheus
@@ -68,7 +68,7 @@ services:
       - workflow-network
     restart: unless-stopped
 
-  # Grafana - 可视化
+  # Grafana - visualization
   grafana:
     image: grafana/grafana:latest
     container_name: workflow-grafana

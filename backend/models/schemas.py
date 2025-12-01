@@ -1,5 +1,5 @@
 """
-数据模型定义
+Data model definitions
 """
 from enum import Enum
 from typing import Optional, List, Dict, Any
@@ -9,7 +9,7 @@ import uuid
 
 
 class JobStatus(str, Enum):
-    """任务状态枚举"""
+    """Job status enumeration"""
     PENDING = "PENDING"
     RUNNING = "RUNNING"
     SUCCEEDED = "SUCCEEDED"
@@ -18,13 +18,13 @@ class JobStatus(str, Enum):
 
 
 class JobType(str, Enum):
-    """任务类型枚举"""
-    CELL_SEGMENTATION = "cell_segmentation"  # 细胞分割
-    TISSUE_MASK = "tissue_mask"  # 组织掩码生成
+    """Job type enumeration"""
+    CELL_SEGMENTATION = "cell_segmentation"  # Cell segmentation
+    TISSUE_MASK = "tissue_mask"  # Tissue mask generation
 
 
 class WorkflowStatus(str, Enum):
-    """工作流状态枚举"""
+    """Workflow status enumeration"""
     PENDING = "PENDING"
     RUNNING = "RUNNING"
     COMPLETED = "COMPLETED"
@@ -33,7 +33,7 @@ class WorkflowStatus(str, Enum):
 
 
 class JobProgress(BaseModel):
-    """任务进度"""
+    """Job progress"""
     job_id: str
     status: JobStatus
     progress_percent: float = 0.0
@@ -46,17 +46,17 @@ class JobProgress(BaseModel):
 
 
 class JobCreate(BaseModel):
-    """创建任务请求"""
+    """Create job request"""
     job_type: JobType
-    branch: str = Field(..., description="分支名称，同一分支的任务串行执行")
-    image_path: str = Field(..., description="图像文件路径")
-    parameters: Dict[str, Any] = Field(default_factory=dict, description="任务参数")
-    depends_on: List[str] = Field(default_factory=list, description="依赖的job_id列表，系统将自动创建workflow")
-    workflow_name: Optional[str] = Field(None, description="工作流名称（可选），用于将多个相关任务组织在一起")
+    branch: str = Field(..., description="Branch name, jobs in the same branch execute serially")
+    image_path: str = Field(..., description="Image file path")
+    parameters: Dict[str, Any] = Field(default_factory=dict, description="Job parameters")
+    depends_on: List[str] = Field(default_factory=list, description="List of dependent job_ids, system will automatically create workflow")
+    workflow_name: Optional[str] = Field(None, description="Workflow name (optional), used to organize multiple related jobs together")
 
 
 class Job(BaseModel):
-    """任务模型"""
+    """Job model"""
     job_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     user_id: str
     workflow_id: Optional[str] = None
@@ -77,24 +77,24 @@ class Job(BaseModel):
 
 
 class WorkflowNode(BaseModel):
-    """工作流节点（DAG节点）"""
+    """Workflow node (DAG node)"""
     node_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     job_type: JobType
     branch: str
     image_path: str
     parameters: Dict[str, Any] = Field(default_factory=dict)
-    depends_on: List[str] = Field(default_factory=list, description="依赖的节点ID列表")
+    depends_on: List[str] = Field(default_factory=list, description="List of dependent node IDs")
 
 
 class WorkflowCreate(BaseModel):
-    """创建工作流请求"""
+    """Create workflow request"""
     name: str
     description: Optional[str] = None
     nodes: List[WorkflowNode]
 
 
 class Workflow(BaseModel):
-    """工作流模型"""
+    """Workflow model"""
     workflow_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     user_id: str
     name: str
@@ -109,7 +109,7 @@ class Workflow(BaseModel):
 
 
 class WorkflowProgress(BaseModel):
-    """工作流进度"""
+    """Workflow progress"""
     workflow_id: str
     status: WorkflowStatus
     progress_percent: float
@@ -120,7 +120,7 @@ class WorkflowProgress(BaseModel):
 
 
 class UserStats(BaseModel):
-    """用户统计"""
+    """User statistics"""
     user_id: str
     active_jobs: int
     completed_jobs: int
@@ -129,7 +129,7 @@ class UserStats(BaseModel):
 
 
 class SystemStats(BaseModel):
-    """系统统计"""
+    """System statistics"""
     active_users: int
     max_active_users: int
     active_workers: int

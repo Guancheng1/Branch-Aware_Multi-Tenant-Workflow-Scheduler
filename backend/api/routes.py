@@ -1,5 +1,5 @@
 """
-API路由定义
+API route definitions
 """
 from fastapi import APIRouter, HTTPException, Header, UploadFile, File, Depends
 from typing import Optional, List
@@ -21,9 +21,9 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-# 依赖：获取用户ID
+# Dependency: Get user ID
 async def get_user_id(x_user_id: str = Header(...)) -> str:
-    """从请求头获取用户ID"""
+    """Get user ID from request header"""
     if not x_user_id:
         raise HTTPException(status_code=400, detail="X-User-ID header is required")
     return x_user_id
@@ -35,15 +35,15 @@ async def create_job(
     user_id: str = Depends(get_user_id)
 ):
     """
-    创建单个任务
+    Create a single job
     
-    如果指定了depends_on，系统将自动创建workflow并组织任务依赖关系。
+    If depends_on is specified, the system will automatically create a workflow and organize job dependencies.
     
     Headers:
-        X-User-ID: 用户唯一标识
+        X-User-ID: User unique identifier
     """
     try:
-        # 验证依赖的jobs
+        # Validate dependent jobs
         dependent_jobs = []
         if job_create.depends_on:
             for dep_job_id in job_create.depends_on:
@@ -60,11 +60,11 @@ async def create_job(
                     )
                 dependent_jobs.append(dep_job)
         
-        # 如果有依赖关系，自动创建或加入workflow
+        # If there are dependencies, automatically create or join a workflow
         workflow_id = None
         if job_create.depends_on or job_create.workflow_name:
-            # 查找是否有现有workflow可以加入
-            # 如果依赖的job已经在workflow中，加入同一个workflow
+            # Check if there's an existing workflow to join
+            # If the dependent job is already in a workflow, join the same workflow
             existing_workflow = None
             if dependent_jobs:
                 for dep_job in dependent_jobs:
@@ -73,20 +73,20 @@ async def create_job(
                         if existing_workflow:
                             break
             
-            # 如果没有找到现有workflow，创建新的
+            # If no existing workflow found, create a new one
             if not existing_workflow:
                 workflow_name = job_create.workflow_name or f"Auto Workflow - {job_create.job_type}"
                 
-                # 创建workflow nodes
+                # Create workflow nodes
                 nodes = []
                 
-                # 不要为已存在的jobs创建nodes！
-                # 已存在的jobs已经在调度器中运行，不应该重复创建
-                # 只添加新job作为node，并通过depends_on引用已存在的job_ids
+                # Don't create nodes for existing jobs!
+                # Existing jobs are already running in the scheduler and shouldn't be duplicated
+                # Only add the new job as a node, and reference existing job_ids through depends_on
                 
-                # 添加新job作为node
+                # Add new job as node
                 new_node = WorkflowNode(
-                    node_id=f"job_pending",  # 临时ID，稍后更新
+                    node_id=f"job_pending",  # Temporary ID, will be updated later
                     job_type=job_create.job_type,
                     branch=job_create.branch,
                     image_path=job_create.image_path,
@@ -95,22 +95,22 @@ async def create_job(
                 )
                 nodes.append(new_node)
                 
-                # 创建workflow
+                # Create workflow
                 workflow = Workflow(
                     user_id=user_id,
                     name=workflow_name,
                     description=f"Automatically created workflow with dependency on existing jobs",
                     nodes=nodes,
-                    job_ids=[dep_job.job_id for dep_job in dependent_jobs]  # 记录依赖的job_ids但不创建新的
+                    job_ids=[dep_job.job_id for dep_job in dependent_jobs]  # Record dependent job_ids but don't create new ones
                 )
                 
                 workflow_id = await workflow_manager.create_workflow(workflow)
                 logger.info(f"Auto-created workflow {workflow_id} for job with dependencies")
             else:
-                # 加入现有workflow
+                # Join existing workflow
                 workflow_id = existing_workflow.workflow_id
                 
-                # 添加新node到现有workflow
+                # Add new node to existing workflow
                 new_node = WorkflowNode(
                     node_id=f"job_pending",
                     job_type=job_create.job_type,
@@ -122,7 +122,7 @@ async def create_job(
                 existing_workflow.nodes.append(new_node)
                 logger.info(f"Added job to existing workflow {workflow_id}")
         
-        # 创建任务对象
+        # Create job object
         job = Job(
             user_id=user_id,
             workflow_id=workflow_id,
@@ -132,10 +132,10 @@ async def create_job(
             parameters=job_create.parameters
         )
         
-        # 提交到调度器
+        # Submit to scheduler
         job_id = await scheduler.submit_job(job)
         
-        # 更新workflow中的node_id（从pending到实际job_id）
+        # Update node_id in workflow (from pending to actual job_id)
         if workflow_id:
             workflow = workflow_manager.get_workflow(workflow_id)
             if workflow:
@@ -162,13 +162,13 @@ async def get_job(
     job_id: str,
     user_id: str = Depends(get_user_id)
 ):
-    """获取任务详情"""
+    """Get job details"""
     job = scheduler.get_job(job_id)
     
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
     
-    # 验证用户权限
+    # Verify user permissions
     if job.user_id != user_id:
         raise HTTPException(status_code=403, detail="Access denied")
     
@@ -177,7 +177,7 @@ async def get_job(
 
 @router.get("/jobs", response_model=List[Job])
 async def list_jobs(user_id: str = Depends(get_user_id)):
-    """列出用户的所有任务"""
+    """List all user jobs"""
     jobs = scheduler.get_user_jobs(user_id)
     return jobs
 
@@ -187,7 +187,7 @@ async def cancel_job(
     job_id: str,
     user_id: str = Depends(get_user_id)
 ):
-    """取消任务"""
+    """Cancel job"""
     success = await scheduler.cancel_job(job_id, user_id)
     
     if not success:
@@ -202,13 +202,13 @@ async def create_workflow(
     user_id: str = Depends(get_user_id)
 ):
     """
-    创建工作流（DAG）
+    Create workflow (DAG)
     
     Headers:
-        X-User-ID: 用户唯一标识
+        X-User-ID: User unique identifier
     """
     try:
-        # 创建工作流对象
+        # Create workflow object
         workflow = Workflow(
             user_id=user_id,
             name=workflow_create.name,
@@ -216,7 +216,7 @@ async def create_workflow(
             nodes=workflow_create.nodes
         )
         
-        # 提交到工作流管理器
+        # Submit to workflow manager
         workflow_id = await workflow_manager.create_workflow(workflow)
         
         logger.info(f"Workflow {workflow_id} created by user {user_id}")
@@ -235,7 +235,7 @@ async def get_workflow(
     workflow_id: str,
     user_id: str = Depends(get_user_id)
 ):
-    """获取工作流详情"""
+    """Get workflow details"""
     workflow = workflow_manager.get_workflow(workflow_id)
     
     if not workflow:
@@ -252,7 +252,7 @@ async def get_workflow_progress(
     workflow_id: str,
     user_id: str = Depends(get_user_id)
 ):
-    """获取工作流进度"""
+    """Get workflow progress"""
     workflow = workflow_manager.get_workflow(workflow_id)
     
     if not workflow:
@@ -267,7 +267,7 @@ async def get_workflow_progress(
 
 @router.get("/workflows", response_model=List[Workflow])
 async def list_workflows(user_id: str = Depends(get_user_id)):
-    """列出用户的所有工作流"""
+    """List all user workflows"""
     workflows = workflow_manager.get_user_workflows(user_id)
     return workflows
 
@@ -277,7 +277,7 @@ async def cancel_workflow(
     workflow_id: str,
     user_id: str = Depends(get_user_id)
 ):
-    """取消工作流"""
+    """Cancel workflow"""
     success = await workflow_manager.cancel_workflow(workflow_id, user_id)
     
     if not success:
@@ -292,17 +292,17 @@ async def upload_image(
     user_id: str = Depends(get_user_id)
 ):
     """
-    上传图像文件
+    Upload image file
     
     Returns:
-        文件路径信息
+        File path information
     """
     try:
-        # 创建用户目录
+        # Create user directory
         user_upload_dir = Path(settings.UPLOAD_DIR) / user_id
         user_upload_dir.mkdir(parents=True, exist_ok=True)
         
-        # 保存文件
+        # Save file
         file_path = user_upload_dir / file.filename
         
         with file_path.open("wb") as buffer:
@@ -323,14 +323,14 @@ async def upload_image(
 
 @router.get("/stats/system", response_model=SystemStats)
 async def get_system_stats():
-    """获取系统统计信息"""
+    """Get system statistics"""
     stats = scheduler.get_system_stats()
     return SystemStats(**stats)
 
 
 @router.get("/stats/user", response_model=UserStats)
 async def get_user_stats(user_id: str = Depends(get_user_id)):
-    """获取用户统计信息"""
+    """Get user statistics"""
     jobs = scheduler.get_user_jobs(user_id)
     
     active_jobs = sum(1 for j in jobs if j.status == JobStatus.RUNNING)
@@ -348,7 +348,7 @@ async def get_user_stats(user_id: str = Depends(get_user_id)):
 
 @router.get("/health")
 async def health_check():
-    """健康检查"""
+    """Health check"""
     return {
         "status": "healthy",
         "scheduler": "running",

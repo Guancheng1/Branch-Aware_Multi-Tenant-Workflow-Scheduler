@@ -1,12 +1,12 @@
 """
-Prometheus指标定义
+Prometheus metrics definitions
 """
 from prometheus_client import Counter, Gauge, Histogram
 import logging
 
 logger = logging.getLogger(__name__)
 
-# 任务指标
+# Job metrics
 jobs_total = Counter(
     'jobs_total',
     'Total number of jobs',
@@ -26,7 +26,7 @@ job_duration_seconds = Histogram(
     buckets=[1, 5, 10, 30, 60, 120, 300, 600, 1800, 3600]
 )
 
-# 调度器指标
+# Scheduler metrics
 queue_depth = Gauge(
     'queue_depth',
     'Number of jobs in queue',
@@ -48,7 +48,7 @@ active_workers = Gauge(
     'Number of active workers'
 )
 
-# 系统指标
+# System metrics
 system_errors = Counter(
     'system_errors_total',
     'Total number of system errors',
@@ -57,7 +57,7 @@ system_errors = Counter(
 
 
 def record_job_start(user_id: str, job_type: str, branch: str):
-    """记录任务开始"""
+    """Record job start"""
     try:
         jobs_active.labels(user_id=user_id, branch=branch).inc()
     except Exception as e:
@@ -65,7 +65,7 @@ def record_job_start(user_id: str, job_type: str, branch: str):
 
 
 def record_job_complete(user_id: str, job_type: str, branch: str, status: str, duration: float):
-    """记录任务完成"""
+    """Record job completion"""
     try:
         jobs_active.labels(user_id=user_id, branch=branch).dec()
         jobs_total.labels(user_id=user_id, job_type=job_type, status=status).inc()
@@ -75,7 +75,7 @@ def record_job_complete(user_id: str, job_type: str, branch: str, status: str, d
 
 
 def update_queue_metrics(branch_queues: dict):
-    """更新队列指标"""
+    """Update queue metrics"""
     try:
         for branch, queue in branch_queues.items():
             queue_depth.labels(branch=branch).set(len(queue))
@@ -84,7 +84,7 @@ def update_queue_metrics(branch_queues: dict):
 
 
 def update_system_metrics(stats: dict):
-    """更新系统指标"""
+    """Update system metrics"""
     try:
         active_users.set(stats.get('active_users', 0))
         waiting_users.set(stats.get('waiting_users', 0))
@@ -94,7 +94,7 @@ def update_system_metrics(stats: dict):
 
 
 def record_error(component: str, error_type: str):
-    """记录错误"""
+    """Record error"""
     try:
         system_errors.labels(component=component, error_type=error_type).inc()
     except Exception as e:

@@ -1,26 +1,26 @@
 #!/bin/bash
-# 在运行中的Docker容器内应用results路由补丁
+# Apply results route patch inside running Docker container
 
-echo "🔧 正在Docker容器内应用结果文件访问补丁..."
+echo "🔧 Applying results file access patch inside Docker container..."
 
-# 创建临时Python脚本来修改main.py
+# Create temporary Python script to modify main.py
 docker-compose exec -T app python3 << 'PYTHON_SCRIPT'
 import re
 
-# 读取main.py
+# Read main.py
 with open('/app/main.py', 'r') as f:
     content = f.read()
 
-# 检查是否已经有results挂载
+# Check if results mount already exists
 if 'mount("/results"' in content:
-    print("✅ results路由已存在，无需修改")
+    print("✅ Results route already exists, no modification needed")
     exit(0)
 
-# 找到static挂载的位置，在其后添加results挂载
-pattern = r'(# 挂载静态文件.*?logger\.warning\("Static directory not found.*?"\))'
+# Find static mount location and add results mount after it
+pattern = r'(# Mount static files.*?logger\.warning\("Static directory not found.*?"\))'
 replacement = r'''\1
 
-# 挂载结果文件目录
+# Mount results file directory
 try:
     app.mount("/results", StaticFiles(directory="results"), name="results")
     logger.info("Results files mounted at /results")
@@ -29,61 +29,61 @@ except RuntimeError:
 
 new_content = re.sub(pattern, replacement, content, flags=re.DOTALL)
 
-# 如果替换成功，写回文件
+# If replacement successful, write back to file
 if new_content != content:
     with open('/app/main.py', 'w') as f:
         f.write(new_content)
-    print("✅ main.py已更新")
+    print("✅ main.py updated")
 else:
-    print("❌ 未能找到插入位置")
+    print("❌ Could not find insertion point")
     exit(1)
 PYTHON_SCRIPT
 
 if [ $? -eq 0 ]; then
     echo ""
-    echo "📝 验证修改..."
+    echo "📝 Verifying changes..."
     docker-compose exec app grep -A2 'mount("/results"' /app/main.py
     
     echo ""
-    echo "🔄 重启容器以应用更改..."
+    echo "🔄 Restarting container to apply changes..."
     docker-compose restart app
     
     echo ""
-    echo "⏳ 等待服务启动..."
+    echo "⏳ Waiting for service to start..."
     sleep 5
     
     echo ""
-    echo "✅ 完成! 现在测试结果文件访问..."
+    echo "✅ Complete! Now testing results file access..."
     sleep 2
     
-    # 测试访问
+    # Test access
     echo ""
-    echo "🔍 测试结果文件访问:"
+    echo "🔍 Testing results file access:"
     STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/results/user-001/825269aa-a9d8-4038-b3e2-3b9344fb6562/segmentation_results.json)
     
     if [ "$STATUS" = "200" ]; then
-        echo "  ✅ JSON文件访问成功! (状态码: $STATUS)"
+        echo "  ✅ JSON file access successful! (Status code: $STATUS)"
     else
-        echo "  ❌ JSON文件访问失败 (状态码: $STATUS)"
+        echo "  ❌ JSON file access failed (Status code: $STATUS)"
     fi
     
     STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/results/user-001/825269aa-a9d8-4038-b3e2-3b9344fb6562/visualization.jpg)
     
     if [ "$STATUS" = "200" ]; then
-        echo "  ✅ 图像文件访问成功! (状态码: $STATUS)"
+        echo "  ✅ Image file access successful! (Status code: $STATUS)"
     else
-        echo "  ❌ 图像文件访问失败 (状态码: $STATUS)"
+        echo "  ❌ Image file access failed (Status code: $STATUS)"
     fi
     
     echo ""
-    echo "🎉 补丁应用完成!"
+    echo "🎉 Patch application complete!"
     echo ""
-    echo "💡 现在可以在浏览器中测试:"
-    echo "   1. 打开: http://localhost:8000"
-    echo "   2. 点击任务 825269aa-a9d8-4038-b3e2-3b9344fb6562"  
-    echo "   3. 点击「查看结果」按钮"
+    echo "💡 You can now test in browser:"
+    echo "   1. Open: http://localhost:8000"
+    echo "   2. Click on task 825269aa-a9d8-4038-b3e2-3b9344fb6562"  
+    echo "   3. Click the 'View Results' button"
 else
-    echo "❌ 补丁应用失败"
+    echo "❌ Patch application failed"
     exit 1
 fi
 
